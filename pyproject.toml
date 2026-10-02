@@ -15,6 +15,9 @@ dependencies = [
     "pytest>=9.1.1",
 ]
 
+[project.scripts]
+goalpost = "goalpost.cli.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",

@@ -93,8 +93,8 @@ def test_simulate_cli_runs():
 
         result = subprocess.run(
             [sys.executable, "-m", "goalpost.cli.simulate",
-             "--week", "1", "--season", "2024", "--models", str(out),
-             "--schedule", str(sched), "--n-sims", "10"],
+             "--week", "1", "--season", "2024", "--dataset", str(out),
+             "--n-sims", "10"],
             capture_output=True,
             text=True,
         )
