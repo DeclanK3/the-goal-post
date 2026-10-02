@@ -69,7 +69,7 @@ def _run_prompt_flow(term: r.Terminal, title: str, prompt_labels: list) -> dict 
     current = 0
     while current < len(prompt_labels):
         _draw_prompt(term, title, prompt_labels, values)
-        term.show_cursor(True)
+        term.show_cursor()
         evt = term.next_event_typed(-1)
         if evt.kind != "key":
             continue
@@ -77,7 +77,7 @@ def _run_prompt_flow(term: r.Terminal, title: str, prompt_labels: list) -> dict 
             return None
         if evt.code == r.KeyCode.Enter:
             # read line from terminal
-            term.show_cursor(True)
+            term.show_cursor()
             buf = input(f"  {prompt_labels[current]}: ").strip()
             if buf:
                 values[prompt_labels[current]] = buf
@@ -89,11 +89,10 @@ def run_tui():
     term = r.Terminal()
     try:
         term.enable_raw()
-        term.show_cursor(False)
         _run_app(term)
     finally:
         term.disable_raw()
-        term.show_cursor(True)
+        term.show_cursor()
         term.clear()
 
 
