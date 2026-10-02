@@ -1,6 +1,6 @@
 """Plot only the included simulation population, with acceptance denominators."""
 import os
-os.environ.setdefault('MPLCONFIGDIR','/tmp/ryan-grace-matplotlib')
+os.environ.setdefault('MPLCONFIGDIR', '/tmp/ryan-grace-matplotlib')
 from pathlib import Path
 import json
 import numpy as np
@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
-from .paths import GRACE as ROOT
+from ..data.base.paths import ARTIFACTS as ROOT
 def main():
     r=json.loads((ROOT/'results.json').read_text());c=json.loads((ROOT/'comparison.json').read_text())
     scores=np.load(ROOT/'scores.npy');scores=scores[(scores>=0).all(1)]
