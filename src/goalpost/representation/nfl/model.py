@@ -2,7 +2,8 @@
 import numpy as np
 
 from ..base.models import TransitionModel
-from .builder import N_STATES, N_CONTEXTS, VALIDITY_MASK, build_validity_mask
+from .builder import N_STATES, N_CONTEXTS, build_validity_mask
+from .flatten import NFLFlattener
 
 
 class NFLTransitionModel(TransitionModel):
@@ -10,6 +11,7 @@ class NFLTransitionModel(TransitionModel):
         super().__init__(team_id, game_id, opponent_id)
         self._matrix = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
         self._flat = None
+        self._flattener = NFLFlattener()
 
     @property
     def state_space_size(self) -> int:
@@ -34,8 +36,7 @@ class NFLTransitionModel(TransitionModel):
     def flatten(self) -> np.ndarray:
         if self._flat is not None:
             return self._flat
-        mask = self.validity_mask
-        flat = self._matrix[:, mask].flatten()
+        flat = np.concatenate([self._flattener.flatten(self._matrix[c]) for c in range(N_CONTEXTS)])
         self._flat = flat
         return flat
 
@@ -51,7 +52,7 @@ class NFLTransitionModel(TransitionModel):
         flat_idx = 0
         for c in range(N_CONTEXTS):
             vals = array[flat_idx:flat_idx + n_masked]
-            obj._matrix[c][mask] = vals
+            obj._matrix[c] = obj._flattener.unflatten(vals)
             flat_idx += n_masked
         return obj
 

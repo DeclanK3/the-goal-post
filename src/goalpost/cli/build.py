@@ -6,14 +6,11 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from goalpost.data.base.paths import ARTIFACTS
-from goalpost.representation.nfl.extractor import extract_game
+from goalpost.representation.nfl.extractor import extract_game, NFLExtractedGame
 from goalpost.representation.nfl.builder import NFLTransitionBuilder
-
-
-def _write_matrix(path: Path, key: str, matrix: np.ndarray):
-    path.mkdir(parents=True, exist_ok=True)
-    np.save(path / f"{key}.npy", matrix)
+from goalpost.representation.nfl.context import extract_paired_observations
+from goalpost.representation.nfl.flatten import NFLFlattener
+from goalpost.representation.nfl.dataset import VAEDatasetBuilder
 
 
 def main():
@@ -38,14 +35,26 @@ def main():
                 continue
 
     table = builder.build(games)
-    manifest = []
-    for (team, game_id), matrix in table.matrices.items():
-        key = f"{team}_{game_id}"
-        _write_matrix(output, key, matrix)
-        manifest.append({"team": team, "game_id": game_id, "file": f"{key}.npy"})
 
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(f"Built {len(manifest)} matrices from {len(games)} games")
+    flattener = NFLFlattener()
+    dataset_builder = VAEDatasetBuilder(flattener)
+
+    observations = []
+    for game in games:
+        if not isinstance(game, NFLExtractedGame):
+            continue
+        home_key = (game.home, game.game_id)
+        away_key = (game.away, game.game_id)
+        home_mat = table.matrices.get(home_key)
+        away_mat = table.matrices.get(away_key)
+        if home_mat is None or away_mat is None:
+            continue
+        observations.extend(extract_paired_observations(game, home_mat, away_mat, season=2024))
+
+    df = dataset_builder.build(observations)
+    dataset_builder.write(df, output / "vae_dataset.parquet")
+    dataset_builder.write_schema(output / "vae_schema.json")
+    print(f"Built {len(observations)} context observations from {len(games)} games -> {len(df)} rows")
 
 
 if __name__ == "__main__":

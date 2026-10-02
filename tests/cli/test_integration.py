@@ -65,10 +65,12 @@ def test_build_cli_runs():
             text=True,
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert (out / "manifest.json").exists()
-        manifest = json.loads((out / "manifest.json").read_text())
-        assert len(manifest) > 0
-        assert (out / manifest[0]["file"]).exists()
+        assert (out / "vae_dataset.parquet").exists()
+        assert (out / "vae_schema.json").exists()
+        schema = json.loads((out / "vae_schema.json").read_text())
+        assert schema["total_columns"] > 0
+        df = pl.read_parquet(out / "vae_dataset.parquet")
+        assert len(df) > 0
 
 
 def test_simulate_cli_runs():
