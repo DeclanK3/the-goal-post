@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+import numpy as np
 import polars as pl
 
 from goalpost.representation.nfl.model import NFLTransitionModel
@@ -32,19 +33,41 @@ def _load_dataset_as_models(dataset_dir: Path) -> dict:
         return {}
 
     df = pl.read_parquet(parquet_path)
+
+    # Feature columns are prefixed by team and exclude metadata columns
+    home_cols = [
+        c for c in df.columns
+        if c.startswith("home_") and c not in ("home_team", "home_score", "home_available")
+    ]
+    away_cols = [
+        c for c in df.columns
+        if c.startswith("away_") and c not in ("away_team", "away_score", "away_available")
+    ]
+
     models = {}
-    for row in df.to_dicts():
-        game_id = row["game_id"]
-        home_team = row["home_team"]
-        away_team = row["away_team"]
+    for game_id, group in df.group_by("game_id"):
+        # The dataset stores one row per context_index; we need all 9 to
+        # reconstruct the full flat vector expected by from_flat().
+        rows = sorted(group.to_dicts(), key=lambda r: r["context_index"])
+        if len(rows) != 9:
+            continue
 
-        home_key = (home_team, game_id)
-        away_key = (away_team, game_id)
+        home_flat = np.concatenate(
+            [np.array([r[c] for c in home_cols], dtype=np.float32) for r in rows]
+        )
+        away_flat = np.concatenate(
+            [np.array([r[c] for c in away_cols], dtype=np.float32) for r in rows]
+        )
 
-        if home_key not in models:
-            models[home_key] = NFLTransitionModel(home_team, game_id, away_team)
-        if away_key not in models:
-            models[away_key] = NFLTransitionModel(away_team, game_id, home_team)
+        home_team = rows[0]["home_team"]
+        away_team = rows[0]["away_team"]
+
+        models[(home_team, game_id)] = NFLTransitionModel.from_flat(
+            home_flat, home_team, game_id, away_team
+        )
+        models[(away_team, game_id)] = NFLTransitionModel.from_flat(
+            away_flat, away_team, game_id, home_team
+        )
 
     return models
 
