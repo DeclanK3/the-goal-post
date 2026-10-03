@@ -36,7 +36,14 @@ class NFLTransitionModel(TransitionModel):
         return {int(j): float(row[j]) for j in nz}
 
     def get_point_values(self, context: int, state: int, next_state: int) -> tuple[float, float]:
-        return float(self._own_points[context, state, next_state]), float(self._opp_points[context, state, next_state])
+        own = float(self._own_points[context, state, next_state])
+        opp = float(self._opp_points[context, state, next_state])
+        # Fallback defaults for known absorbing outcomes when explicit values aren't stored
+        if next_state == ABSORBING_FG and own == 0.0:
+            own = 3.0
+        elif next_state == ABSORBING_TD and own == 0.0:
+            own = 7.0
+        return own, opp
 
     def flatten(self) -> np.ndarray:
         if self._flat is not None:
@@ -59,13 +66,13 @@ class NFLTransitionModel(TransitionModel):
             vals = array[flat_idx:flat_idx + n_masked]
             obj._matrix[c] = obj._flattener.unflatten(vals)
             flat_idx += n_masked
-        # Default point values for absorbing states
+        # Default point values for absorbing states (TD=7 matches empirical mode)
         for c in range(N_CONTEXTS):
             obj._own_points[c, :, ABSORBING_FG] = 3.0
-            obj._own_points[c, :, ABSORBING_TD] = 6.0
+            obj._own_points[c, :, ABSORBING_TD] = 7.0
         return obj
 
-    def load_matrix(self, matrix: np.ndarray, own_points: np.ndarray | None = None, opp_points: np.ndarray | None = None):
+    def load_matrix(self, matrix: np.ndarray, own_points: np.ndarray | None = None, opp_points: np.ndarray | None = None, fallback_matrix: np.ndarray | None = None):
         if matrix.shape != (N_CONTEXTS, N_STATES, N_STATES):
             raise ValueError(f"matrix shape mismatch: {matrix.shape}")
         self._matrix = matrix.astype(np.float32)
@@ -73,3 +80,5 @@ class NFLTransitionModel(TransitionModel):
         if own_points is not None and opp_points is not None:
             self._own_points = own_points.astype(np.float32)
             self._opp_points = opp_points.astype(np.float32)
+        if fallback_matrix is not None:
+            self._fallback_matrix = fallback_matrix.astype(np.float32)

@@ -45,5 +45,5 @@ def test_from_flat_default_point_values():
     own_td, opp_td = rebuilt.get_point_values(0, 16, 73)
     assert own_fg == 3.0
     assert opp_fg == 0.0
-    assert own_td == 6.0
+    assert own_td == 7.0  # empirical mode from 2024 data (395 7-pt vs 44 6-pt)
     assert opp_td == 0.0
