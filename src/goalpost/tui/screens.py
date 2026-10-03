@@ -36,9 +36,11 @@ def draw_generate_dataset() -> str:
         "  Generate VAE Dataset",
         "  ────────────────────",
         "",
-        "  1. Enter sources directory (path to nflverse parquets)",
+        "  1. Enter sources directory (path to dataset parquets)",
+        "     OR type 'download' to fetch from nflverse",
         "  2. Enter output directory",
-        "  3. Press Enter to build",
+        "  3. If downloading, enter seasons (e.g. 2023,2024,2025)",
+        "  4. Press Enter to build",
         "",
         "  Press 'b' to go back",
     ])
