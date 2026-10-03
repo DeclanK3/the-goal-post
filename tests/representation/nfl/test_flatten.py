@@ -8,11 +8,16 @@ from goalpost.representation.nfl.builder import N_STATES
 def test_flatten_and_unflatten_roundtrip():
     flattener = NFLFlattener()
     matrix = np.zeros((N_STATES, N_STATES), dtype=np.float32)
-    for s in range(N_STATES):
-        if s < 72:
-            matrix[s, s] = 1.0
-        else:
-            matrix[s, s] = 1.0
+    # identity on physical states
+    for s in range(72):
+        matrix[s, s] = 1.0
+    # absorbing states self-loop
+    for s in (72, 73, 74, 75):
+        matrix[s, s] = 1.0
+    # physical-to-absorbing transitions must survive round-trip
+    matrix[16, 72] = 0.2  # physical -> FG
+    matrix[16, 73] = 0.3  # physical -> TD
+    matrix[16, 16] = 0.5  # remaining probability on identity
     flat = flattener.flatten(matrix)
     assert flat.dtype == np.float32
     rebuilt = flattener.unflatten(flat)
