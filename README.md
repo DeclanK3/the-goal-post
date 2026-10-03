@@ -1,21 +1,31 @@
-# GoalPost: football transition extraction and simulation
+# GoalPost: NFL Transition Modeling
 
-The active transition implementation is `src/goalpost/transitions`. It extracts NFL and college football play-by-play into one row per game, imputes unobserved conditional rows using strictly earlier games, and simulates paired home/away regulation scores with an elapsed-time clock. This replaces the previous `NFLTransitionModel` absorbing-outcome implementation; the two tensor formats are not interchangeable.
+GoalPost is a sport-agnostic framework for extracting football play-by-play data into transition matrices, simulating game outcomes, and building VAE-ready datasets from paired team-context observations. The NFL-specific implementation uses [nflverse](https://github.com/nflverse/nflverse-data) play-by-play data as its source of truth.
 
-## What is implemented
+## Architecture
 
-- **Game rows:** NFL and college tables share a schema containing game/date/team identifiers, final and regulation scores, flattened probabilities and counts, starting conditions and explicit parsing status. Both team directions are present, ordered home then away. Rejected or missing games retain null matrices rather than disappearing from the inventory. College scope includes FBS games and standalone FCS games, with incomplete coverage disclosed.
-- **State representation:** 72 down/distance/field-position states; nine contexts from three remaining-half-time buckets and three score-lead buckets. Sparse edge keys encode source, destination, possession switch, offensive points and opponent points. Tensor shape is `[2, 9, E]`; `E` and flattening order come from the versioned catalog (2,732 edges in the September 24 reset dataset), never a hard-coded VAE input size.
-- **Extraction:** nflverse NFL PBP, college archive adapters and whole-game ESPN fallbacks. Ordered segments preserve intervening scoring, special-teams and defensive events. Administrative halftime markers do not become football states. The initial extraction preserves censored endpoints; the reset removes those endpoints from the fitted matrix and retains boundary scoring evidence separately.
-- **Imputation:** fill only unobserved conditional rows, using earlier UTC dates, the same team first and the same league second. Keep time buckets fixed and pool score-lead categories. Original observed rows remain unchanged; imputed values never become donors. Donor logs and masks remain separate from the flattened probabilities.
-- **Simulation:** use both teams' empirical 2026 matrix blends for the fixed Packers-home/Falcons-away example. Two 1,800-second halves advance using observed segment durations; halftime reset is outside the matrix. A missing row with strictly `0 < seconds remaining < 10` may retain the accumulated score and end that half approximately. Supported late transitions still run normally. Other failures remain incomplete, not completed zero scores.
-- **Outputs:** paired scores, inclusion/failure diagnostics, exact probability masses for total (`home + away`) and margin (`home - away`), and plots labeled with mean and standard deviation. Grace-policy comparison replays each strict game's RNG state to preserve already-completed scores.
+The codebase is organized into generic (sport-agnostic) and sport-specific layers:
 
-This code does **not** train a VAE, certify college clock semantics, model overtime, or establish calibrated betting probabilities. Existing `kalman_vae` components remain a separate scaffold; the obsolete training example and hybrid/terminal-state demos were removed because their inputs are incompatible. `goalpost.simulator.run` now re-exports the elapsed-clock array API rather than the retired latent/drive simulator.
+| Layer | Purpose | NFL Implementation |
+|-------|---------|-------------------|
+| `goalpost.data.base` | Generic data-source abstractions (`DataSource`, `Game`, `Play`, `Possession`) | `goalpost.data.nfl` |
+| `goalpost.data.nfl` | NFL-specific data acquisition and parsing | `NFLDataSource`, `fetcher.py`, `schedule.py` |
+| `goalpost.representation.base` | Generic extraction, transition building, imputation | `GameExtractor`, `TransitionBuilder`, `Imputer` |
+| `goalpost.representation.nfl` | NFL-specific extraction and transition modeling | `NFLGameExtractor`, `NFLTransitionBuilder`, `VAEDatasetBuilder` |
+| `goalpost.simulation.base` | Generic simulation engine and market models | `Simulator`, `Market` |
+| `goalpost.simulation.nfl` | NFL-specific simulation and weekly scheduling | `weekly_runner` |
+| `goalpost.cli` | Command-line entry points | `--build`, `--simulate` |
+| `goalpost.tui` | Interactive terminal UI | `run_tui()` |
+
+### Key design principles
+
+- **Sport-agnostic core:** The generic layers (`base`) define abstractions that could support other sports. NFL specifics are confined to `goalpost.data.nfl` and `goalpost.representation.nfl`.
+- **No synthetic data in production:** Production code never generates, substitutes, or silently falls back to synthetic data. Missing or unavailable real data produces a clear failure. Synthetic data is strictly confined to tests for mocking and fixtures.
+- **Explicit data acquisition:** The real-data path downloads nflverse release assets directly. There is no hidden caching, no fallback to demo data, and no silent production of empty datasets.
 
 ## Install and test
 
-Use Python 3.12 (the CI version):
+Requires Python 3.12+:
 
 ```sh
 python -m venv .venv
@@ -24,272 +34,134 @@ python -m pip install -e '.[dev]'
 python -m pytest -q
 ```
 
-Default tests under `tests/transitions` are offline, with small public-provider fixtures. They cover extraction, scoring, clock handling, imputation and package entry points. Older network-fetch integration tests remain under `src/tests` and are not part of the offline default suite. Unit success is not full-dataset validation.
+## CLI usage
 
-`.github/workflows/unit-tests.yml` runs this same suite for pull requests targeting `axiom/architecture-scaffold` and pushes to that branch, including PR merges. It uses read-only repository permissions and no provider credentials. A fork PR may require a maintainer to approve its first workflow run.
+### Build a VAE-ready dataset from nflverse data
 
-## Reproduce the dataset before running weekly simulations
-
-`reset/data/transition_set.json` is generated by **`build_reset`**, using the catalog and game tables produced by **`build_tables`**. Do not create or copy that JSON alone: the weekly runner needs its matching `nfl_games.parquet` and `parsed_segments.parquet` too.
-
-### Start from an empty data directory
-
-The historical source downloader is `src/goalpost/transitions/fetch_sources.py`. From the repository root, after installing Python and this package, use:
+Download real NFLverse play-by-play data and build the transition dataset in one command:
 
 ```sh
-python -m pip install -e '.[dev]'
-python -m goalpost.transitions.fetch_sources
-python -m goalpost.transitions.build_artifacts --sources artifacts/sources
-python -m goalpost.transitions.weekly --data artifacts/transitions/reset/data --simulations 50000
+python -m goalpost.cli.build \
+  --seasons 2023,2024,2025 \
+  --output artifacts/dataset
 ```
 
-No environment variables, API keys, hand-built CSVs or pre-existing datasets are required. The source command downloads the 13 required files for 2023–2026 into `artifacts/sources`: the NFL schedule CSV, four NFL play-by-play Parquets, four college play-by-play Parquets and four college schedules. These are upstream data exports; the script downloads and validates them rather than fabricating or synthesizing source data.
+This will:
+1. Download `play_by_play_{season}.parquet` from nflverse releases for each requested season
+2. Cache the raw files in `~/.cache/goalpost/nflverse/`
+3. Extract games, build transition matrices, and generate paired context observations
+4. Write `vae_dataset.parquet` and `vae_schema.json` to `--output`
 
-Sources: [nflverse play-by-play](https://github.com/nflverse/nflverse-data/releases/tag/pbp), [nflverse schedule](https://github.com/nflverse/nfldata/blob/master/data/games.csv), [SportsDataverse college play-by-play](https://github.com/sportsdataverse/sportsdataverse-data/releases/tag/cfbfastR_cfb_pbp), and [college schedules](https://github.com/sportsdataverse/sportsdataverse-data/releases/tag/cfb_schedules). College coverage is whatever these upstream sources supply; the extractor retains missing/rejected games, including standalone FCS gaps, rather than claiming complete coverage. The separate ESPN weekly cache supplies upcoming matchups, not historical extraction data.
-
-Downloads can be large. `--output /path/to/raw-sources` changes the destination; `--timeout 180` changes the network timeout. Each file must be nonempty, parseable and contain the columns required by the extractor. Temporary downloads are only published after validation; `download-manifest.json` records URLs, timestamps, hashes, sizes and schemas. Repeating the command resumes missing files and reuses only hash-verified completed files. It refuses changed/untracked existing files. A missing upstream season or schema change fails explicitly and never creates an empty substitute. A process interruption can leave `.download.lock`; remove it only after confirming that no downloader is running in that directory.
-
-For fresh upstream data, choose a new source directory and a new artifact root using `--output` on each command. Cached files are not refreshed automatically. Release assets can change, so a new download does not guarantee byte-identical reproduction of the original frozen dataset. The extractor still applies its fixed **September 23, 2026** cutoff; downloading newer sources does not extend it. Optional ESPN college fallbacks described below are not included in this minimum download set.
-
-### Recommended: standalone build (no environment variables)
-
-After installing the package (`python -m pip install -e '.[dev]'`) and supplying the source files listed below, run from the repository root:
+You can also provide pre-existing local parquet files:
 
 ```sh
-python -m goalpost.transitions.build_artifacts --sources /absolute/path/to/raw-sources
-python -m goalpost.transitions.weekly --data artifacts/transitions/reset/data --simulations 50000
+python -m goalpost.cli.build \
+  --sources /path/to/local/parquets \
+  --output artifacts/dataset
 ```
 
-The build command creates `artifacts/transitions` by default, independently of `GOALPOST_TRANSITION_DATA`. It extracts both game tables, verifies them, builds the clock-reset matrices with earlier-game team/league imputation, and independently verifies the reset dataset. It does not run simulations or fetch data. The weekly command obtains its upcoming schedule through the existing ESPN cache.
+**One of `--seasons` or `--sources` is required; both together is an error.**
 
-For a different destination or a rebuild, select a **new, nonexistent** root:
+#### Validation
+
+Downloaded nflverse data is validated against the required schema before any processing begins. If a season's release asset is missing or the schema is unexpected, the command fails with a clear `NFLverseError` — no synthetic or empty substitute is produced.
+
+### Run simulations
 
 ```sh
-python -m goalpost.transitions.build_artifacts \
-  --sources /absolute/path/to/raw-sources \
-  --output artifacts/rebuild-01
-python -m goalpost.transitions.weekly --data artifacts/rebuild-01/reset/data --simulations 50000
+python -m goalpost.cli.simulate \
+  --dataset artifacts/dataset \
+  --week 5 \
+  --season 2024 \
+  --n-sims 10000
 ```
 
-Optional flags: `--nfl2023 /path/to/play_by_play_2023.parquet` overrides the default file inside `--sources`; `--raw-summaries /path/to/saved/espn-summaries` includes the existing college fallback. An `espn_cfb_pbp-2026.parquet` file in the source directory is included automatically, as in the original extractor.
+### Interactive TUI
 
-All required files are checked before starting. Builds occur in a sibling staging directory and publish the artifact root only after both verifiers pass. Existing output roots are refused. `build-report.json` records stages, source/output SHA-256 hashes, cutoff and the weekly data path; `build.log` preserves build output. Failed builds exit nonzero and retain their unpublished staging directory and diagnostics. Do not run with Python `-O`: verification requires assertions. An interrupted process can leave a `.NAME.build.lock`; remove it only after confirming no builder is running for that target. Verification establishes artifact consistency, not complete state coverage, simulation completion, or predictive accuracy.
-
-### Manual individual steps (alternative)
-
-The commands below show the equivalent lower-level sequence and source layout. The standalone command above replaces extraction, reset construction and both verification commands; it does not require the environment variables used in this manual alternative.
-
-### 1. Install and choose an empty artifact directory
+Launch the terminal UI with no arguments:
 
 ```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev]'
-
-export GOALPOST_TRANSITION_DATA="$PWD/artifacts/transitions"
-export FOOTBALL_SOURCES="/absolute/path/to/raw-sources"
+python -m goalpost
 ```
 
-Replace the raw-source path with your actual directory. Generated data lives outside the installed package. For a rebuild, choose a new artifact directory: extraction and reset dataset outputs must be empty, and existing datasets should not be deleted just to rerun these commands.
+From the TUI you can:
+- **Generate Dataset:** Provide a sources directory, or type `download` to fetch nflverse data directly
+- **Run Simulation:** Select a built dataset directory, week, and season
+- **Inspect Game:** Load and inspect any parquet file
 
-### 2. Supply the historical source files
+## Data flow
 
-The source directory must contain:
-
-```text
-nfl-schedule.csv
-play_by_play_2023.parquet
-nfl-2024.parquet
-nfl-2025.parquet
-nfl-2026.parquet
-cfb_schedules-2023.parquet
-cfb_schedules-2024.parquet
-cfb_schedules-2025.parquet
-cfb_schedules-2026.parquet
-cfb-2023.parquet
-cfb-2024.parquet
-cfb-2025.parquet
-cfb-2026.parquet
+```
+User specifies seasons (--seasons)
+           |
+           v
+    fetch_nflverse([2023, 2024, 2025])
+           |
+           v
+    Cache: ~/.cache/goalpost/nflverse/nfl-{season}.parquet
+           |
+           v
+    NFLDataSource.parse() -> List[Game]
+           |
+           v
+    extract_game() -> NFLExtractedGame
+           |
+           v
+    NFLTransitionBuilder.build() -> per-team transition matrices
+           |
+           v
+    extract_paired_observations() -> PairedContextObservation[]
+           |
+           v
+    VAEDatasetBuilder.build() -> pl.DataFrame
+           |
+           v
+    Write: {output}/vae_dataset.parquet + vae_schema.json
 ```
 
-NFL inputs are the nflverse completed-game schedule and play-by-play; college inputs use the SportsDataverse/cfbfastR-compatible schemas expected by the adapters. These filenames describe the expected input layout, not files included in Git.
+## NFLverse source
 
-**The current builder requires both NFL and college inputs, even for NFL-only weekly simulations.** It retains the September 23, 2026 extraction cutoff. Exact reproduction of the original dataset requires the same frozen source inputs; newly downloaded historical files can contain revisions and change the catalog, coverage and hashes.
+The downloader reads directly from nflverse GitHub release assets:
 
-### 3. Extract and verify the game tables
-
-```sh
-python -m goalpost.transitions.build_tables \
-  --sources "$FOOTBALL_SOURCES" \
-  --nfl2023 "$FOOTBALL_SOURCES/play_by_play_2023.parquet" \
-  --output "$GOALPOST_TRANSITION_DATA/extracted"
-
-python -m goalpost.transitions.verify_tables \
-  "$GOALPOST_TRANSITION_DATA/extracted"
+```
+https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet
 ```
 
-Optional college fallbacks: place `espn_cfb_pbp-2026.parquet` in the source directory and/or add `--raw-summaries /path/to/saved/espn-summaries` to `build_tables`. Omitting those fallbacks changes coverage relative to the original full dataset. No `--reuse-parsed` predecessor is needed for a fresh build.
+Polars reads these Parquet files over HTTPS. No API keys, credentials, or environment variables are required. Each season is downloaded and validated independently; a failure for any season aborts the entire build with a clear error.
 
-### 4. Build and verify the clock-reset, historically imputed dataset
+## Output artifacts
 
-```sh
-python -m goalpost.transitions.build_reset
-python -m goalpost.transitions.verify_reset
-```
+After a successful build, the output directory contains:
 
-This generates the requested catalog together with its compatible tables and evidence:
+| File | Description |
+|------|-------------|
+| `vae_dataset.parquet` | Paired context observations per game, flattened transition features |
+| `vae_schema.json` | Column manifest: context columns, home/away feature names, total count |
 
-```text
-$GOALPOST_TRANSITION_DATA/reset/data/
-├── transition_set.json
-├── nfl_games.parquet
-├── college_games.parquet
-├── parsed_segments.parquet
-├── boundary_evidence.parquet
-├── imputation-provenance.parquet
-├── donor-history-log.json
-├── score-evidence-audit.parquet
-└── summary.json
-```
+The dataset schema includes:
+- Context columns: `game_id`, `season`, `week`, `date`, `home_team`, `away_team`, `context_index`, `time_bin`, `score_bin`, `home_score`, `away_score`, `home_available`, `away_available`
+- Home features: `home_{state}_to_{state}` for each valid transition
+- Away features: `away_{state}_to_{state}` for each valid transition
 
-The matching pre-imputation tables are in `reset/raw`; the reset verifier writes `reset/verification.json`. Verification checks extraction/reconstruction and donor provenance, not predictive calibration or betting readiness.
+A missing or unavailable dataset must produce a clear failure; the production pipeline never fabricates or substitutes synthetic data.
 
-### 5. Run the weekly simulations
+## Tests and synthetic data policy
 
-```sh
-python -m goalpost.transitions.weekly --simulations 50000
-```
+The test suite is fully offline. Synthetic data is used **only** inside tests for mocking and fixtures:
 
-Keep `GOALPOST_TRANSITION_DATA` set to the same artifact root. The weekly CLI reads `reset/data`, obtains the upcoming schedule automatically through the ESPN cache, and writes a new timestamped output directory. You do **not** need to run `simulate_reset` or `run_comparison` first: those reproduce the earlier fixed Packers–Falcons comparison, not a prerequisite of the weekly runner.
+- `tests/cli/test_integration.py` — `_make_synthetic_parquet()` creates minimal rows for CLI integration tests
+- `tests/data/nfl/test_fetcher.py` — mocked nflverse downloads validate the download path without making network requests
+- `tests/representation/nfl/test_dataset.py` — `_make_observation()` creates toy observations for unit tests
 
-### Optional audits and college fallback acquisition
-
-`audit_v3` compares supplied extraction versions. `audit_reset` is a historical preflight requiring the old terminal-state dataset at `$GOALPOST_TRANSITION_DATA/legacy-imputed`; neither is part of the minimal sequence above.
-
-The raw-summary fetcher performs public network requests only when explicitly invoked. It requires a previous college table to identify missing/rejected games, so it is not a primary-source bootstrap:
-
-```sh
-python -m goalpost.transitions.fetch_raw_snapshot \
-  --previous-college-table /path/to/previous/college_games.parquet \
-  --output /path/to/raw-summaries
-```
-
-Use its saved summaries in a new extraction output directory with `--raw-summaries`, then repeat reset construction and verification under that new artifact root.
-
-## Simulate and plot
-
-After the reset data exists:
-
-```sh
-python -m goalpost.transitions.simulate_reset
-python -m goalpost.transitions.run_comparison
-python -m goalpost.transitions.plot_distributions
-# Optional strict-only baseline plot:
-python -m goalpost.transitions.plot_reset
-```
-
-The strict baseline is written under `reset/matchup`; the paired current-policy results and plots under `grace`. The example is fixed to GB versus ATL, 2026 contributing games, 50,000 attempts and seed 20260924. Final-score labels are not simulation inputs. Low-level use: `goalpost.transitions.simulator.run(keys, probabilities, timing_records, n=..., seed=..., grace_seconds=10)` returns scores, diagnostics, missing-row events and per-run dispositions. Set grace to zero for strict clock completion.
-
-For stored rows, `read_game_rows.unpack(row)` restores the catalog-shaped tensor and `team_view(row, team_id)` puts the requested team first without discarding the opponent. The removed `NFLTransitionModel` class and its 468-element flattened representation must not be used for these tables.
-
-## Simulate the upcoming NFL week
-
-```sh
-# Use the locally cached ESPN schedule, fetching it on a cache miss:
-python -m goalpost.transitions.weekly --simulations 50000
-
-# Reproduce a run using its saved CSV and explicit selection/cutoff:
-python -m goalpost.transitions.weekly \
-  --schedule /path/to/saved/schedule.csv \
-  --season 2026 --week 3 --game-type REG \
-  --as-of 2026-09-25T14:00:00Z \
-  --data "$GOALPOST_TRANSITION_DATA/reset/data" \
-  --output "$GOALPOST_TRANSITION_DATA/weekly/replay-week-3" \
-  --simulations 50000 --seed 20260924
-```
-
-By default the CLI reads ESPN’s current-week scoreboard through a local cache. It chooses the season/week/game-type of the nearest upcoming non-preseason kickoff within seven days in that response, then considers that whole NFL week. Thus a Friday run retains Sunday/Monday matchups but reports Thursday as already played/started. Season identity is preserved through January playoffs. An explicit week requires both `--season` and `--week`. The ESPN adapter converts UTC kickoffs to Eastern for the compatible CSV and retains the exact UTC kickoff separately. Saved nflverse-format CSVs still use Eastern kickoff strings per the [nflverse schedule dictionary](https://nflreadr.nflverse.com/articles/dictionary_schedules.html). Missing times, already-started games, recorded scores and invalid identities are exclusions; an empty/stale schedule does not produce a successful slate.
-
-### ESPN cache behavior
-
-No weekly CSV preparation is required. `python -m goalpost.transitions.weekly` uses [ESPN’s public NFL scoreboard](https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard) automatically.
-
-- Cache location: `$GOALPOST_TRANSITION_DATA/schedule-cache` (default `artifacts/transitions/schedule-cache`). `--schedule-cache PATH` overrides it.
-- Default lifetime: **3,600 seconds**. A valid hit makes no HTTP request. Missing, expired, corrupt, future-dated or incompatible entries trigger a fresh pull. `--cache-max-age-seconds 0` disables reuse.
-- `--refresh-schedule` forces a new pull regardless of age. Use it when checking a recent kickoff/status change; a cache is a snapshot, not a live guarantee.
-- Entries are keyed by provider request, separating the current-week endpoint from explicit season/week requests. Explicit postseason selections translate NFL weeks to ESPN rounds; preseason and unsupported rounds are not simulated.
-- The cache stores the raw JSON, request URL, retrieval timestamp, adapter version and content hash. A valid response is written atomically only after normalization; failed refreshes leave the prior file intact but do not use stale data. Cache age uses the real retrieval clock, never the simulation’s `--as-of` date.
-- ESPN home/away designations determine orientation. `LAR` maps to dataset ID `LA`, and `WSH` to `WAS`; unknown teams fail validation. The normalized game ID matches the NFL season/week/away/home form; ESPN’s event ID is retained separately.
-- Only explicit `STATUS_SCHEDULED` events are eligible. Their `0–0` placeholder scores become blank CSV fields. Final, in-progress, postponed and canceled events remain excluded. No missing or unknown status is assumed scheduled.
-
-```sh
-python -m goalpost.transitions.weekly --refresh-schedule
-python -m goalpost.transitions.weekly --cache-max-age-seconds 900
-```
-
-`--schedule /path/to/schedule.csv` bypasses ESPN and its cache completely for reproducible offline runs. An empty/current-week response with no upcoming games produces an explicit empty-slate result rather than inventing another week. The cache is intended for sequential local CLI runs; concurrent cold-cache invocations may each perform a pull, though atomic replacement keeps the cache valid.
-
-For each team, blend its supported own-offense rows equally across eligible **current-season** matrices, retaining their earlier-game imputation. Both matrix history and league timing samples must precede the earlier of the run's as-of day and target kickoff day (UTC); same-day and target-game observations are excluded. Missing current-season team history is a blocked matchup, never silently replaced with a different team or season. The schedule fetch does not update the underlying frozen matrices. Each result records its contributing game IDs/dates and timing population so stale or sparse history is visible. This cutoff is an added weekly-run safeguard; it does not remove the original descriptive vocabulary limitation or turn a retrospective run into a historically recorded forecast.
-
-The runner reuses the existing elapsed-clock simulation and strictly-under-ten-second missing-row rule. The seed is derived independently from the root seed and game ID, so changing slate order does not change another game's random sequence. It runs 50,000 attempts **per matchup** by default; use a smaller number for engineering smoke tests, not final probability estimates.
-
-A new timestamped directory under `artifacts/transitions/weekly` contains:
-
-- `schedule.csv`, `schedule-espn.json` (for ESPN runs) and `report.json`: normalized CSV, exact raw ESPN response, source/input hashes, original retrieval time, cache hit/age, selection/exclusions, per-game results and coverage limitations.
-- One directory per selected game: `scores.npy` (home then away), `simulation-outcomes.parquet`, `missing-row-events.parquet`, `result.json`, exact total and home-margin PMF CSVs, plus `distributions.png` and `.pdf` with μ and σ labeled.
-- Blocked or zero-completion matchups remain explicit in the report; no distribution is invented for them. Partially completed matchups show their full attempt/completion denominators and approximation counts.
-
-Existing output directories are refused rather than overwritten. A run exits 0 when every selected matchup has a distribution, 2 for an empty or partially blocked slate, and nonzero on a data/network/runtime failure (saved in `report.json`). An expired cache is never used as a fallback on fetch failure. This command does not access sportsbook odds, send notifications, place bets, or train a VAE.
+**No synthetic or demo data is ever created, consumed, or substituted by production code.** The production `build` CLI and TUI require either a valid local sources directory or a successful nflverse download. Empty or missing inputs raise `FileNotFoundError` or `ValueError`; bad downloads raise `NFLverseError`.
 
 ## Known limitations
 
-Censored final-segment scoring is preserved as evidence but not completely learned by the fitted transition matrix. Segment-duration censoring and the under-ten-second approximation can omit late scoring. Incomplete simulations are excluded explicitly, so displayed distributions are conditional on completion. College clocks and standalone FCS coverage remain incomplete. The descriptive vocabulary was built on the full frozen snapshot rather than a train-only split; chronological imputation alone does not make this a leakage-free forecasting evaluation. There is no opponent-defense adjustment, home-field model, overtime model or demonstrated out-of-sample edge in this implementation.
+- The extraction supports NFL regulation play only. Overtime, preseason, and special-teams scoring details are not fully modeled.
+- College football support exists in the architecture but is not currently wired to a live data source.
+- The VAE dataset is a structured representation of transition probabilities; it does not itself train a VAE.
+- Simulation outputs are exploratory and not validated betting probabilities.
 
-Historical design decisions and original large-run results are in `docs/transitions`; their paths refer to the original artifact packages. This package refactor preserves the algorithms and adds importable modules, external artifact paths and offline CI. No production betting service is changed.
+## License
 
-
-## Rebuild artifacts with the zero-time correction (v2)
-
-The reset builder now combines zero-duration, zero-point transitions back to the
-same coarse state and possession with their actual observed successor. This
-prevents those segments from becoming reusable zero-time self-loops. It does not
-discard all penalties or all `no_play` records: a penalty can change exact yardage
-while remaining in the same modeled bucket. Source records stay unchanged.
-
-Successor links must match game, half, possession, state, clock, score lead and
-play identity. Chains may end in preserved boundary evidence. The builder
-recomputes transition counts, probabilities and earlier-game donor defaults from
-the combined segments. `reset/coalesced-segment-map.json` maps each resulting
-segment to its original extracted segment indices; the reset verifier checks
-coverage, elapsed/scoring evidence and donor reconstruction. The representation
-version is `football-only-elapsed-clock-v2`.
-
-From a fresh checkout with the package installed, run:
-
-```sh
-python -m goalpost.transitions.fetch_sources
-python -m goalpost.transitions.build_artifacts --sources artifacts/sources --output artifacts/transitions-v2
-python -m goalpost.transitions.weekly --data artifacts/transitions-v2/reset/data --simulations 50000
-```
-
-Use a new output directory; existing artifacts and forecasts are not overwritten.
-Existing verified sources can be reused by skipping `fetch_sources`. NFL and
-college source files are both still required. Download caching and the fixed
-September 23, 2026 extraction cutoff are unchanged; this is not a live dataset
-refresh. Identical reproduction requires identical source inputs.
-
-The VAE preparation table is `artifacts/transitions-v2/reset/data/nfl_games.parquet`,
-with both teams' flattened probabilities and game metadata. Keep its matching
-`transition_set.json`. `reset/raw` contains corrected **pre-imputation** matrices;
-`reset/data` contains corrected **post-imputation** matrices. Neither directory
-contains untouched provider data. Markings and donor logs remain separate;
-observed counts are not replaced by synthetic imputed counts.
-
-Both simulation entry points also reject supported closed transition classes
-with zero elapsed time and zero rewards before sampling. This check is
-conservative across supported states, including potentially unreachable states.
-It does not guarantee complete support or prevent every kind of incomplete path.
-Legacy v1 artifacts can fail this check and should be rebuilt, not relabeled.
-The elapsed clock, under-ten-second approximation and separately preserved final
-boundary scoring remain unchanged. No experimental clock model, VAE training,
-state-space redesign or alternate extraction ordering is introduced here.
+MIT

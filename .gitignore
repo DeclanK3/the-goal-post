@@ -1,12 +1,11 @@
 .venv/
 uv*
 
+.vscode/
+
 __pycache__/
 *.pyc
 .pytest_cache/
 artifacts/
 dist/
 *.egg-info/
-
-data/
-
