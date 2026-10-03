@@ -45,20 +45,13 @@ class NFLEngine(Simulator):
                 weights /= weights.sum()
                 next_state = rng.choice(states, p=weights)
                 if next_state >= N_PHYSICAL_STATES:
-                    if next_state == ABSORBING_FG:
-                        if offense == 0:
-                            home += 3
-                        else:
-                            away += 3
-                    elif next_state == ABSORBING_TD:
-                        if offense == 0:
-                            home += 6
-                        else:
-                            away += 6
-                    elif next_state == ABSORBING_TO:
-                        pass
-                    elif next_state == ABSORBING_PUNT:
-                        pass
+                    own_pts, opp_pts = model.get_point_values(ctx, state, next_state)
+                    if offense == 0:
+                        home += own_pts
+                        away += opp_pts
+                    else:
+                        away += own_pts
+                        home += opp_pts
                     offense = 1 - offense
                     state = 16
                 else:

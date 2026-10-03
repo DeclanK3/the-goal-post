@@ -2,7 +2,7 @@
 import numpy as np
 
 from ..base.models import TransitionModel
-from .builder import N_STATES, N_CONTEXTS, build_validity_mask
+from .builder import N_STATES, N_CONTEXTS, build_validity_mask, ABSORBING_FG, ABSORBING_TD
 from .flatten import NFLFlattener
 
 
@@ -10,6 +10,8 @@ class NFLTransitionModel(TransitionModel):
     def __init__(self, team_id: str, game_id: str, opponent_id: str):
         super().__init__(team_id, game_id, opponent_id)
         self._matrix = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        self._own_points = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        self._opp_points = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
         self._flat = None
         self._flattener = NFLFlattener()
 
@@ -33,6 +35,9 @@ class NFLTransitionModel(TransitionModel):
         nz = np.flatnonzero(row)
         return {int(j): float(row[j]) for j in nz}
 
+    def get_point_values(self, context: int, state: int, next_state: int) -> tuple[float, float]:
+        return float(self._own_points[context, state, next_state]), float(self._opp_points[context, state, next_state])
+
     def flatten(self) -> np.ndarray:
         if self._flat is not None:
             return self._flat
@@ -54,10 +59,17 @@ class NFLTransitionModel(TransitionModel):
             vals = array[flat_idx:flat_idx + n_masked]
             obj._matrix[c] = obj._flattener.unflatten(vals)
             flat_idx += n_masked
+        # Default point values for absorbing states
+        for c in range(N_CONTEXTS):
+            obj._own_points[c, :, ABSORBING_FG] = 3.0
+            obj._own_points[c, :, ABSORBING_TD] = 6.0
         return obj
 
-    def load_matrix(self, matrix: np.ndarray):
+    def load_matrix(self, matrix: np.ndarray, own_points: np.ndarray | None = None, opp_points: np.ndarray | None = None):
         if matrix.shape != (N_CONTEXTS, N_STATES, N_STATES):
             raise ValueError(f"matrix shape mismatch: {matrix.shape}")
         self._matrix = matrix.astype(np.float32)
         self._flat = None
+        if own_points is not None and opp_points is not None:
+            self._own_points = own_points.astype(np.float32)
+            self._opp_points = opp_points.astype(np.float32)

@@ -15,10 +15,11 @@ ABSORBING_PUNT = 75
 
 
 def build_validity_mask():
-    """Return boolean mask (N, N) of structurally possible transitions."""
     mask = np.zeros((N_STATES, N_STATES), dtype=bool)
-    # All physical states can transition to any physical state
+    # Physical states can reach any physical state and any absorbing outcome
     mask[:N_PHYSICAL_STATES, :N_PHYSICAL_STATES] = True
+    for dst in (ABSORBING_FG, ABSORBING_TD, ABSORBING_TO, ABSORBING_PUNT):
+        mask[:N_PHYSICAL_STATES, dst] = True
     # Absorbing states self-loop
     for s in (ABSORBING_FG, ABSORBING_TD, ABSORBING_TO, ABSORBING_PUNT):
         mask[s, s] = True
@@ -29,37 +30,40 @@ VALIDITY_MASK = build_validity_mask()
 
 
 def _map_destination(event) -> int:
-    """Map an event destination to a Markov state index."""
     if event.destination == -1:
-        # Half-ending event - infer from points
-        if event.own_points == 3:
-            return ABSORBING_FG
-        elif event.own_points == 6 or event.own_points == 7:
-            return ABSORBING_TD
-        elif event.opponent_points > 0:
-            return ABSORBING_TO
-        elif event.own_points == 0:
-            return ABSORBING_PUNT
+        return -1  # half-ending; no transition recorded
+    if event.own_points == 3:
+        return ABSORBING_FG
+    if event.own_points in (6, 7, 8):
+        return ABSORBING_TD
+    if event.opponent_points > 0:
+        return ABSORBING_TO
+    if event.play_type == "punt":
+        return ABSORBING_PUNT
+    if event.switch:
         return ABSORBING_TO
     return event.destination
 
 
 class NFLGameTable(GameTable):
-    def __init__(self, matrices: dict, keys: list):
+    def __init__(self, matrices: dict, keys: list, point_values: dict | None = None):
         # matrices: {(team, game): (C, N, N) array}
         self.matrices = matrices
         self.keys = keys
+        self.point_values = point_values or {}
 
 
 class NFLTransitionBuilder(TransitionBuilder):
     def build(self, games) -> NFLGameTable:
         matrices = {}
+        point_values = {}
         for game in games:
             if not isinstance(game, NFLExtractedGame):
                 continue
-            # Build per-team matrices
             for team in (game.home, game.away):
                 counts = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.int32)
+                own_pts_sum = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+                opp_pts_sum = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
                 totals = np.zeros((N_CONTEXTS, N_STATES), dtype=np.int32)
                 for e in game.events:
                     is_home = e.home_offense
@@ -69,19 +73,27 @@ class NFLTransitionBuilder(TransitionBuilder):
                     ctx = e.ctx
                     src = e.source
                     dst = _map_destination(e)
+                    if dst == -1:
+                        continue
                     if src >= N_PHYSICAL_STATES:
                         continue
                     counts[ctx, src, dst] += 1
+                    own_pts_sum[ctx, src, dst] += e.own_points
+                    opp_pts_sum[ctx, src, dst] += e.opponent_points
                     totals[ctx, src] += 1
-                # Convert counts to probabilities
                 probs = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+                own_pts = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+                opp_pts = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
                 for c in range(N_CONTEXTS):
                     for s in range(N_STATES):
                         if totals[c, s] > 0:
                             probs[c, s, :] = counts[c, s, :] / totals[c, s]
-                # Enforce absorbing states
+                            nz = counts[c, s, :] > 0
+                            own_pts[c, s, nz] = own_pts_sum[c, s, nz] / counts[c, s, nz]
+                            opp_pts[c, s, nz] = opp_pts_sum[c, s, nz] / counts[c, s, nz]
                 for s in (ABSORBING_FG, ABSORBING_TD, ABSORBING_TO, ABSORBING_PUNT):
                     probs[:, s, :] = 0
                     probs[:, s, s] = 1.0
                 matrices[(team, game.game_id)] = probs
-        return NFLGameTable(matrices, list(matrices.keys()))
+                point_values[(team, game.game_id)] = (own_pts, opp_pts)
+        return NFLGameTable(matrices, list(matrices.keys()), point_values)
