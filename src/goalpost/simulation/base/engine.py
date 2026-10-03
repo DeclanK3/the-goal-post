@@ -7,5 +7,5 @@ from .models import GameOutcome
 
 class Simulator(ABC):
     @abstractmethod
-    def simulate(self, transition_model: TransitionModel, n_sims: int = 10000, seed: int = 0) -> List[GameOutcome]:
+    def simulate(self, home_model: TransitionModel, away_model: TransitionModel, n_sims: int = 10000, seed: int = 0) -> List[GameOutcome]:
         pass

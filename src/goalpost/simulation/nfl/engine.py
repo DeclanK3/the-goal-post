@@ -19,15 +19,15 @@ def _context_index(remaining, lead):
 
 
 class NFLEngine(Simulator):
-    def simulate(self, transition_model: TransitionModel, n_sims: int = 10000, seed: int = 0) -> list[GameOutcome]:
+    def simulate(self, home_model: TransitionModel, away_model: TransitionModel, n_sims: int = 10000, seed: int = 0) -> list[GameOutcome]:
         rng = np.random.default_rng(seed)
         outcomes = []
         for _ in range(n_sims):
-            home_score, away_score = self._simulate_game(transition_model, rng)
+            home_score, away_score = self._simulate_game(home_model, away_model, rng)
             outcomes.append(GameOutcome(home_score=home_score, away_score=away_score))
         return outcomes
 
-    def _simulate_game(self, model: TransitionModel, rng) -> tuple[int, int]:
+    def _simulate_game(self, home_model: TransitionModel, away_model: TransitionModel, rng) -> tuple[int, int]:
         home = away = 0
         starter = int(rng.integers(2))
         for half in range(2):
@@ -37,6 +37,8 @@ class NFLEngine(Simulator):
             while remaining > 0:
                 lead = (home - away) if offense == 0 else (away - home)
                 ctx = _context_index(remaining, lead)
+                # Use the correct team's model depending on who has the ball
+                model = home_model if offense == 0 else away_model
                 probs = model.get_probabilities(ctx, state)
                 if not probs:
                     break

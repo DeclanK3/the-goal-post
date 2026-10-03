@@ -83,11 +83,10 @@ def test_mid_half_scoring_simulates_non_zero():
                            opp_points=away_pts[1] if away_pts else None)
 
     engine = NFLEngine()
-    home_out = engine.simulate(home_model, n_sims=1000, seed=42)
-    away_out = engine.simulate(away_model, n_sims=1000, seed=42)
+    outcomes = engine.simulate(home_model, away_model, n_sims=1000, seed=42)
 
-    home_scores = np.array([o.home_score for o in home_out])
-    away_scores = np.array([o.away_score for o in away_out])
+    home_scores = np.array([o.home_score for o in outcomes])
+    away_scores = np.array([o.away_score for o in outcomes])
 
     assert home_scores.mean() > 0, f"Expected home mean > 0, got {home_scores.mean()}"
     assert away_scores.mean() > 0, f"Expected away mean > 0, got {away_scores.mean()}"

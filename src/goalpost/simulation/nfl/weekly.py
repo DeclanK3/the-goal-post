@@ -31,10 +31,9 @@ def weekly_runner(games: list, models: dict, n_sims: int = 10000, seed: int = 0)
         away_model = models.get((game["away_team"], game["game_id"]))
         if home_model is None or away_model is None:
             continue
-        home_outcomes = engine.simulate(home_model, n_sims=n_sims, seed=seed)
-        away_outcomes = engine.simulate(away_model, n_sims=n_sims, seed=seed)
-        home_scores = np.array([o.home_score for o in home_outcomes])
-        away_scores = np.array([o.away_score for o in away_outcomes])
+        outcomes = engine.simulate(home_model, away_model, n_sims=n_sims, seed=seed)
+        home_scores = np.array([o.home_score for o in outcomes])
+        away_scores = np.array([o.away_score for o in outcomes])
         spreads = home_scores - away_scores
         totals = home_scores + away_scores
         results.append(
