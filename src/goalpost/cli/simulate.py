@@ -62,12 +62,20 @@ def _load_dataset_as_models(dataset_dir: Path) -> dict:
         home_team = rows[0]["home_team"]
         away_team = rows[0]["away_team"]
 
-        models[(home_team, game_id)] = NFLTransitionModel.from_flat(
+        home_model = NFLTransitionModel.from_flat(
             home_flat, home_team, game_id, away_team
         )
-        models[(away_team, game_id)] = NFLTransitionModel.from_flat(
+        away_model = NFLTransitionModel.from_flat(
             away_flat, away_team, game_id, home_team
         )
+
+        # Lightweight per-game fallback: average of both team matrices
+        blend = (home_model._matrix + away_model._matrix) / 2.0
+        home_model._fallback_matrix = blend.astype(np.float32)
+        away_model._fallback_matrix = blend.astype(np.float32)
+
+        models[(home_team, game_id)] = home_model
+        models[(away_team, game_id)] = away_model
 
     return models
 

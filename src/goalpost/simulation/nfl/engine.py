@@ -40,6 +40,11 @@ class NFLEngine(Simulator):
                 # Use the correct team's model depending on who has the ball
                 model = home_model if offense == 0 else away_model
                 probs = model.get_probabilities(ctx, state)
+                # If the primary row is empty, try the global fallback matrix
+                if not probs and hasattr(model, '_fallback_matrix') and model._fallback_matrix is not None:
+                    fb = model._fallback_matrix[ctx, state]
+                    nz = np.flatnonzero(fb)
+                    probs = {int(j): float(fb[j]) for j in nz}
                 if not probs:
                     break
                 states = list(probs.keys())

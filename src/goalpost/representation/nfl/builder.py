@@ -46,17 +46,22 @@ def _map_destination(event) -> int:
 
 
 class NFLGameTable(GameTable):
-    def __init__(self, matrices: dict, keys: list, point_values: dict | None = None):
+    def __init__(self, matrices: dict, keys: list, point_values: dict | None = None, global_matrix: np.ndarray | None = None):
         # matrices: {(team, game): (C, N, N) array}
         self.matrices = matrices
         self.keys = keys
         self.point_values = point_values or {}
+        self.global_matrix = global_matrix  # fallback for unobserved rows
 
 
 class NFLTransitionBuilder(TransitionBuilder):
     def build(self, games) -> NFLGameTable:
         matrices = {}
         point_values = {}
+        # Global counts accumulate across all teams and games for fallback
+        global_counts = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.int32)
+        global_totals = np.zeros((N_CONTEXTS, N_STATES), dtype=np.int32)
+
         for game in games:
             if not isinstance(game, NFLExtractedGame):
                 continue
@@ -81,6 +86,9 @@ class NFLTransitionBuilder(TransitionBuilder):
                     own_pts_sum[ctx, src, dst] += e.own_points
                     opp_pts_sum[ctx, src, dst] += e.opponent_points
                     totals[ctx, src] += 1
+                    # Also feed the global accumulator
+                    global_counts[ctx, src, dst] += 1
+                    global_totals[ctx, src] += 1
                 probs = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
                 own_pts = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
                 opp_pts = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
@@ -96,4 +104,15 @@ class NFLTransitionBuilder(TransitionBuilder):
                     probs[:, s, s] = 1.0
                 matrices[(team, game.game_id)] = probs
                 point_values[(team, game.game_id)] = (own_pts, opp_pts)
-        return NFLGameTable(matrices, list(matrices.keys()), point_values)
+
+        # Build global fallback matrix from all accumulated events
+        global_probs = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        for c in range(N_CONTEXTS):
+            for s in range(N_STATES):
+                if global_totals[c, s] > 0:
+                    global_probs[c, s, :] = global_counts[c, s, :] / global_totals[c, s]
+        for s in (ABSORBING_FG, ABSORBING_TD, ABSORBING_TO, ABSORBING_PUNT):
+            global_probs[:, s, :] = 0
+            global_probs[:, s, s] = 1.0
+
+        return NFLGameTable(matrices, list(matrices.keys()), point_values, global_probs)

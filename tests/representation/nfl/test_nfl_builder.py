@@ -68,19 +68,21 @@ def test_mid_half_scoring_simulates_non_zero():
     builder = NFLTransitionBuilder()
     table = builder.build([game])
 
-    # Load home matrix with point values into model
+    # Load home matrix with point values and global fallback
     home_model = NFLTransitionModel("A", "g1", "B")
     home_pts = table.point_values.get(("A", "g1"))
     home_model.load_matrix(table.matrices[("A", "g1")],
                            own_points=home_pts[0] if home_pts else None,
-                           opp_points=home_pts[1] if home_pts else None)
+                           opp_points=home_pts[1] if home_pts else None,
+                           fallback_matrix=table.global_matrix)
 
-    # Load away matrix with point values into model
+    # Load away matrix with point values and global fallback
     away_model = NFLTransitionModel("B", "g1", "A")
     away_pts = table.point_values.get(("B", "g1"))
     away_model.load_matrix(table.matrices[("B", "g1")],
                            own_points=away_pts[0] if away_pts else None,
-                           opp_points=away_pts[1] if away_pts else None)
+                           opp_points=away_pts[1] if away_pts else None,
+                           fallback_matrix=table.global_matrix)
 
     engine = NFLEngine()
     outcomes = engine.simulate(home_model, away_model, n_sims=1000, seed=42)

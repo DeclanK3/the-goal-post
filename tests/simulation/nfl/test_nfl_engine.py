@@ -48,3 +48,37 @@ def test_dual_model_simulation_balanced_scores():
         f"Expected home mean > away mean because TD (7) > FG (3), "
         f"got home={home_scores.mean():.1f}, away={away_scores.mean():.1f}"
     )
+
+
+def test_global_fallback_prevents_early_termination():
+    """An empty primary row with a populated fallback should continue the game."""
+    # Primary model knows nothing about state 16 (the start state).
+    primary = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+    primary[:, 0, 0] = 1.0  # only state 0 is observed
+    primary_model = NFLTransitionModel("A", "g1", "B")
+    primary_model.load_matrix(primary)
+
+    # Fallback: from state 16, always score a TD (state 73).
+    # This lets the simulation proceed instead of breaking on the empty row.
+    fallback = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+    fallback[:, 16, 73] = 1.0
+    primary_model._fallback_matrix = fallback.astype(np.float32)
+
+    # Opponent also uses the same fallback-driven model
+    opp_model = NFLTransitionModel("B", "g1", "A")
+    opp_model.load_matrix(primary)
+    opp_model._fallback_matrix = fallback.astype(np.float32)
+
+    engine = NFLEngine()
+    outcomes = engine.simulate(primary_model, opp_model, n_sims=100, seed=42)
+    home_scores = np.array([o.home_score for o in outcomes])
+    away_scores = np.array([o.away_score for o in outcomes])
+
+    # If the fallback works, both teams should score TDs repeatedly.
+    assert home_scores.mean() > 0, (
+        f"Expected home scores > 0 with fallback TD, got mean {home_scores.mean():.1f}"
+    )
+    assert away_scores.mean() > 0, (
+        f"Expected away scores > 0 with fallback TD, got mean {away_scores.mean():.1f}"
+    )
+
