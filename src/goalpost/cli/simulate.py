@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from goalpost.representation.nfl.model import NFLTransitionModel
+from goalpost.representation.nfl.timing import load_timing_for_game
 from goalpost.simulation.nfl.weekly import weekly_runner
 
 
@@ -45,7 +46,9 @@ def _load_dataset_as_models(dataset_dir: Path) -> dict:
     ]
 
     models = {}
-    for game_id, group in df.group_by("game_id"):
+    for game_id_tuple, group in df.group_by("game_id"):
+        # game_id may be wrapped in a tuple by polars group_by
+        game_id = game_id_tuple[0] if isinstance(game_id_tuple, tuple) else game_id_tuple
         # The dataset stores one row per context_index; we need all 9 to
         # reconstruct the full flat vector expected by from_flat().
         rows = sorted(group.to_dicts(), key=lambda r: r["context_index"])
@@ -73,6 +76,14 @@ def _load_dataset_as_models(dataset_dir: Path) -> dict:
         blend = (home_model._matrix + away_model._matrix) / 2.0
         home_model._fallback_matrix = blend.astype(np.float32)
         away_model._fallback_matrix = blend.astype(np.float32)
+
+        # Load empirical timing from raw nflverse pbp (separate from VAE dataset)
+        # game_id may be a tuple from polars group_by
+        gid_str = game_id[0] if isinstance(game_id, tuple) else game_id
+        timing = load_timing_for_game(gid_str)
+        if timing is not None:
+            home_model._timing = timing
+            away_model._timing = timing
 
         models[(home_team, game_id)] = home_model
         models[(away_team, game_id)] = away_model

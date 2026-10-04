@@ -18,6 +18,21 @@ def _context_index(remaining, lead):
     return time_bin * 3 + score_bin
 
 
+def _sample_duration(model, ctx, state, next_state, rng):
+    """Sample elapsed time from empirical timing or raise."""
+    if hasattr(model, '_timing') and model._timing is not None:
+        return model._timing.sample_duration(ctx, state, next_state, rng)
+    raise ValueError(
+        f"No timing data attached to model for game_id={model.game_id}, "
+        f"team_id={model.team_id}. Empirical timing required; no constant fallback."
+    )
+
+
+# Cache for pre-sampled durations per transition to avoid repeated random draws
+# Format: dict[(model_id, ctx, src, dst)] -> list of pre-sampled durations
+_DURATION_CACHE: dict = {}
+
+
 class NFLEngine(Simulator):
     def simulate(self, home_model: TransitionModel, away_model: TransitionModel, n_sims: int = 10000, seed: int = 0) -> list[GameOutcome]:
         rng = np.random.default_rng(seed)
@@ -51,6 +66,7 @@ class NFLEngine(Simulator):
                 weights = np.array(list(probs.values()), dtype=np.float64)
                 weights /= weights.sum()
                 next_state = rng.choice(states, p=weights)
+                src_state = state
                 if next_state >= N_PHYSICAL_STATES:
                     own_pts, opp_pts = model.get_point_values(ctx, state, next_state)
                     if offense == 0:
@@ -63,7 +79,7 @@ class NFLEngine(Simulator):
                     state = 16
                 else:
                     state = next_state
-                remaining -= rng.exponential(30.0)
+                remaining -= _sample_duration(model, ctx, src_state, next_state, rng)
             if remaining <= 0:
                 remaining = 0
         return home, away

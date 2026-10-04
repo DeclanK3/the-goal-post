@@ -4,6 +4,7 @@ import numpy as np
 from ..base.models import TransitionModel
 from .builder import N_STATES, N_CONTEXTS, build_validity_mask, ABSORBING_FG, ABSORBING_TD
 from .flatten import NFLFlattener
+from .timing import NFLTimingData
 
 
 class NFLTransitionModel(TransitionModel):
@@ -14,6 +15,7 @@ class NFLTransitionModel(TransitionModel):
         self._opp_points = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
         self._flat = None
         self._flattener = NFLFlattener()
+        self._timing: NFLTimingData | None = None
 
     @property
     def state_space_size(self) -> int:
