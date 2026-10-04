@@ -9,7 +9,7 @@ import polars as pl
 
 from .context import PairedContextObservation
 from .flatten import NFLFlattener
-from .builder import N_CONTEXTS
+from .builder import N_CONTEXTS, N_PHYSICAL_STATES
 
 
 @dataclass
@@ -25,6 +25,9 @@ class VAEDatasetBuilder:
             ctx = obs.context
             home_flat = self.flattener.flatten(obs.home_matrix)
             away_flat = self.flattener.flatten(obs.away_matrix)
+            home_prior_flat = self.flattener.flatten(obs.home_prior) if obs.home_prior is not None else None
+            away_prior_flat = self.flattener.flatten(obs.away_prior) if obs.away_prior is not None else None
+            global_prior_flat = self.flattener.flatten(obs.global_prior) if obs.global_prior is not None else None
 
             row = {
                 "game_id": ctx.game_id,
@@ -40,6 +43,11 @@ class VAEDatasetBuilder:
                 "away_score": ctx.away_score,
                 "home_available": obs.home_available,
                 "away_available": obs.away_available,
+                "home_prior_available": home_prior_flat is not None,
+                "away_prior_available": away_prior_flat is not None,
+                "global_timing_mean": obs.global_timing_mean if obs.global_timing_mean is not None else 30.0,
+                "global_timing_std": obs.global_timing_std if obs.global_timing_std is not None else 0.0,
+                "builder_version": "nfl-v2",
             }
 
             home_names = self.flattener.feature_names("home")
@@ -48,6 +56,22 @@ class VAEDatasetBuilder:
                 row[name] = float(val)
             for name, val in zip(away_names, away_flat):
                 row[name] = float(val)
+
+            if home_prior_flat is not None:
+                for name, val in zip(self.flattener.feature_names("home_prior"), home_prior_flat):
+                    row[name] = float(val)
+            if away_prior_flat is not None:
+                for name, val in zip(self.flattener.feature_names("away_prior"), away_prior_flat):
+                    row[name] = float(val)
+            if global_prior_flat is not None:
+                for name, val in zip(self.flattener.feature_names("global_prior"), global_prior_flat):
+                    row[name] = float(val)
+
+            # Flatten start_state_probs: start_ctx_{ctx}_state_{s}
+            if obs.start_state_probs is not None:
+                for c in range(N_CONTEXTS):
+                    for s in range(N_PHYSICAL_STATES):
+                        row[f"start_ctx_{c}_state_{s}"] = float(obs.start_state_probs[c, s])
 
             rows.append(row)
 
@@ -69,11 +93,25 @@ class VAEDatasetBuilder:
             "away_score": pl.Int32,
             "home_available": pl.Boolean,
             "away_available": pl.Boolean,
+            "home_prior_available": pl.Boolean,
+            "away_prior_available": pl.Boolean,
+            "global_timing_mean": pl.Float32,
+            "global_timing_std": pl.Float32,
+            "builder_version": pl.Utf8,
         }
         for name in self.flattener.feature_names("home"):
             base[name] = pl.Float32
         for name in self.flattener.feature_names("away"):
             base[name] = pl.Float32
+        for name in self.flattener.feature_names("home_prior"):
+            base[name] = pl.Float32
+        for name in self.flattener.feature_names("away_prior"):
+            base[name] = pl.Float32
+        for name in self.flattener.feature_names("global_prior"):
+            base[name] = pl.Float32
+        for c in range(N_CONTEXTS):
+            for s in range(N_PHYSICAL_STATES):
+                base[f"start_ctx_{c}_state_{s}"] = pl.Float32
         return base
 
     def write(self, df: pl.DataFrame, path: Path):

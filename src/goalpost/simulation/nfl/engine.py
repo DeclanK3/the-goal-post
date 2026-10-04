@@ -19,9 +19,16 @@ def _context_index(remaining, lead):
 
 
 def _sample_duration(model, ctx, state, next_state, rng):
-    """Sample elapsed time from empirical timing or raise."""
+    """Sample elapsed time from empirical timing, falling back to global mean."""
+    # Try empirical per-transition timing first
     if hasattr(model, '_timing') and model._timing is not None:
-        return model._timing.sample_duration(ctx, state, next_state, rng)
+        try:
+            return model._timing.sample_duration(ctx, state, next_state, rng)
+        except ValueError:
+            pass
+    # Fall back to global empirical mean (I8: fixed from extractor, never fitted)
+    if hasattr(model, '_global_timing_mean') and model._global_timing_mean is not None:
+        return float(model._global_timing_mean)
     raise ValueError(
         f"No timing data attached to model for game_id={model.game_id}, "
         f"team_id={model.team_id}. Empirical timing required; no constant fallback."
@@ -48,25 +55,33 @@ class NFLEngine(Simulator):
         for half in range(2):
             offense = starter if half == 0 else 1 - starter
             remaining = 1800.0
-            state = 16  # typical starting state
+            # Initial drive start: sample from empirical start-state distribution
+            lead = (home - away) if offense == 0 else (away - home)
+            ctx = _context_index(remaining, lead)
+            model = home_model if offense == 0 else away_model
+            state = self._sample_start_state(model, ctx, rng)
             while remaining > 0:
                 lead = (home - away) if offense == 0 else (away - home)
                 ctx = _context_index(remaining, lead)
                 # Use the correct team's model depending on who has the ball
                 model = home_model if offense == 0 else away_model
-                probs = model.get_probabilities(ctx, state)
-                # If the primary row is empty, try the global fallback matrix
-                if not probs and hasattr(model, '_fallback_matrix') and model._fallback_matrix is not None:
-                    fb = model._fallback_matrix[ctx, state]
-                    nz = np.flatnonzero(fb)
-                    probs = {int(j): float(fb[j]) for j in nz}
+                probs = self._get_probs(model, ctx, state)
                 if not probs:
-                    break
+                    raise RuntimeError(
+                        f"Empty row: ctx={ctx}, state={state}, "
+                        f"model={model.team_id}/{model.game_id}"
+                    )
                 states = list(probs.keys())
                 weights = np.array(list(probs.values()), dtype=np.float64)
                 weights /= weights.sum()
                 next_state = rng.choice(states, p=weights)
                 src_state = state
+                elapsed = _sample_duration(model, ctx, src_state, next_state, rng)
+                if remaining - elapsed <= 0:
+                    # Time expired before this play completed; do not evaluate it
+                    remaining = 0
+                    break
+                remaining -= elapsed
                 if next_state >= N_PHYSICAL_STATES:
                     own_pts, opp_pts = model.get_point_values(ctx, state, next_state)
                     if offense == 0:
@@ -76,10 +91,39 @@ class NFLEngine(Simulator):
                         away += own_pts
                         home += opp_pts
                     offense = 1 - offense
-                    state = 16
+                    lead = (home - away) if offense == 0 else (away - home)
+                    ctx = _context_index(remaining, lead)
+                    model = home_model if offense == 0 else away_model
+                    state = self._sample_start_state(model, ctx, rng)
                 else:
                     state = next_state
-                remaining -= _sample_duration(model, ctx, src_state, next_state, rng)
-            if remaining <= 0:
-                remaining = 0
         return home, away
+
+    @staticmethod
+    def _get_probs(model, ctx, state):
+        """Return probability dict, falling back from team prior to global prior."""
+        # Try team-specific prior first (layer 2)
+        if hasattr(model, '_team_prior_matrix') and model._team_prior_matrix is not None:
+            row = model._team_prior_matrix[ctx, state]
+            nz = np.flatnonzero(row)
+            if len(nz) > 0:
+                return {int(j): float(row[j]) for j in nz}
+        # Fall back to global prior (layer 1)
+        if hasattr(model, '_fallback_matrix') and model._fallback_matrix is not None:
+            fb = model._fallback_matrix[ctx, state]
+            nz = np.flatnonzero(fb)
+            if len(nz) > 0:
+                return {int(j): float(fb[j]) for j in nz}
+        # Last resort: the game matrix itself (layer 3)
+        return model.get_probabilities(ctx, state)
+
+    @staticmethod
+    def _sample_start_state(model, ctx, rng):
+        """Sample a drive-start physical state from empirical distribution."""
+        if hasattr(model, '_start_state_probs') and model._start_state_probs is not None:
+            probs = model._start_state_probs[ctx]
+            nz = np.flatnonzero(probs)
+            if len(nz) > 0:
+                weights = probs[nz] / probs[nz].sum()
+                return int(rng.choice(nz, p=weights))
+        return 16  # historical hard-coded fallback

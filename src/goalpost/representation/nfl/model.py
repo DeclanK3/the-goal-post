@@ -2,7 +2,7 @@
 import numpy as np
 
 from ..base.models import TransitionModel
-from .builder import N_STATES, N_CONTEXTS, build_validity_mask, ABSORBING_FG, ABSORBING_TD
+from .builder import N_STATES, N_CONTEXTS, N_PHYSICAL_STATES, build_validity_mask, ABSORBING_FG, ABSORBING_TD
 from .flatten import NFLFlattener
 from .timing import NFLTimingData
 
@@ -16,6 +16,10 @@ class NFLTransitionModel(TransitionModel):
         self._flat = None
         self._flattener = NFLFlattener()
         self._timing: NFLTimingData | None = None
+        # Layered prior and auxiliary data (I5, I8, I10)
+        self._team_prior_matrix: np.ndarray | None = None
+        self._start_state_probs: np.ndarray | None = None
+        self._global_timing_mean: float | None = None
 
     @property
     def state_space_size(self) -> int:
@@ -84,3 +88,19 @@ class NFLTransitionModel(TransitionModel):
             self._opp_points = opp_points.astype(np.float32)
         if fallback_matrix is not None:
             self._fallback_matrix = fallback_matrix.astype(np.float32)
+
+    def load_prior(self, team_prior: np.ndarray | None = None):
+        if team_prior is not None:
+            if team_prior.shape != (N_CONTEXTS, N_STATES, N_STATES):
+                raise ValueError(f"team_prior shape mismatch: {team_prior.shape}")
+            self._team_prior_matrix = team_prior.astype(np.float32)
+
+    def load_start_states(self, start_state_probs: np.ndarray | None = None):
+        if start_state_probs is not None:
+            if start_state_probs.shape != (N_CONTEXTS, N_PHYSICAL_STATES):
+                raise ValueError(f"start_state_probs shape mismatch: {start_state_probs.shape}")
+            self._start_state_probs = start_state_probs.astype(np.float32)
+
+    def load_timing(self, global_timing_mean: float | None = None):
+        if global_timing_mean is not None:
+            self._global_timing_mean = float(global_timing_mean)

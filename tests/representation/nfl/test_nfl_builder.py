@@ -1,7 +1,7 @@
 import numpy as np
 
 from goalpost.representation.nfl.builder import (
-    NFLTransitionBuilder, _map_destination, build_validity_mask,
+    NFLTransitionBuilder, _map_destination, build_validity_mask, ABSORBING_TD,
     N_STATES, N_CONTEXTS,
 )
 from goalpost.representation.nfl.extractor import NFLExtractedGame, NFLEvent
@@ -54,6 +54,17 @@ def test_builder_produces_correct_shape():
     assert home_matrix[1, 16, 73] > 0
 
 
+def _make_filled_fallback():
+    """Return a fallback matrix where every physical row transitions to TD."""
+    fb = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+    for c in range(N_CONTEXTS):
+        for s in range(72):
+            fb[c, s, 73] = 1.0
+    for s in (72, 73, 74, 75):
+        fb[:, s, s] = 1.0
+    return fb
+
+
 def test_mid_half_scoring_simulates_non_zero():
     # Play 1: TD with PAT (7 pts for offense)
     # Play 2: FG (3 pts for offense)
@@ -68,13 +79,16 @@ def test_mid_half_scoring_simulates_non_zero():
     builder = NFLTransitionBuilder()
     table = builder.build([game])
 
+    filled_fb = _make_filled_fallback()
+
     # Load home matrix with point values and global fallback
     home_model = NFLTransitionModel("A", "g1", "B")
     home_pts = table.point_values.get(("A", "g1"))
     home_model.load_matrix(table.matrices[("A", "g1")],
                            own_points=home_pts[0] if home_pts else None,
                            opp_points=home_pts[1] if home_pts else None,
-                           fallback_matrix=table.global_matrix)
+                           fallback_matrix=filled_fb)
+    home_model.load_timing(30.0)
 
     # Load away matrix with point values and global fallback
     away_model = NFLTransitionModel("B", "g1", "A")
@@ -82,7 +96,8 @@ def test_mid_half_scoring_simulates_non_zero():
     away_model.load_matrix(table.matrices[("B", "g1")],
                            own_points=away_pts[0] if away_pts else None,
                            opp_points=away_pts[1] if away_pts else None,
-                           fallback_matrix=table.global_matrix)
+                           fallback_matrix=filled_fb)
+    away_model.load_timing(30.0)
 
     engine = NFLEngine()
     outcomes = engine.simulate(home_model, away_model, n_sims=1000, seed=42)
@@ -92,6 +107,7 @@ def test_mid_half_scoring_simulates_non_zero():
 
     assert home_scores.mean() > 0, f"Expected home mean > 0, got {home_scores.mean()}"
     assert away_scores.mean() > 0, f"Expected away mean > 0, got {away_scores.mean()}"
+
 
 
 def test_edge_case_mappings():
@@ -105,7 +121,7 @@ def test_edge_case_mappings():
         ("td_no_pat", 6, 0, ABSORBING_TD, 6, 0),
         ("td_pat", 7, 0, ABSORBING_TD, 7, 0),
         ("td_2pc", 8, 0, ABSORBING_TD, 8, 0),
-        ("safety", 0, 2, ABSORBING_TO, 0, 2),
+        ("safety", 0, 2, ABSORBING_TO, 0, 0),  # I11: safeties not modeled -> 0 pts both sides
         ("def_td", 0, 7, ABSORBING_TO, 0, 7),
         ("punt", 0, 0, ABSORBING_PUNT, 0, 0),
         ("turnover", 0, 0, ABSORBING_TO, 0, 0),
@@ -180,12 +196,37 @@ def test_edge_case_mappings():
     assert home_opp[ctx, 17, ABSORBING_TD] == 0.0
 
     ctx = context_index(400.0, 0)  # ctx=1
+    # I11: safeties not modeled -> 0 points both sides
     assert home_own[ctx, 18, ABSORBING_TO] == 0.0
-    assert home_opp[ctx, 18, ABSORBING_TO] == 2.0
+    assert home_opp[ctx, 18, ABSORBING_TO] == 0.0
 
     ctx = context_index(300.0, 0)  # ctx=1
     assert home_own[ctx, 19, ABSORBING_TO] == 0.0
     assert home_opp[ctx, 19, ABSORBING_TO] == 0.0
+
+    # Safety: I11 says not modeled -> 0 points
+    safety_event = _make_event(21, 22, False, 0, 2, 350, 0)
+    game_safety = NFLExtractedGame(
+        game_id="g_safety", week=1, date="2024-01-01", home="A", away="B",
+        events=[safety_event], starts=[], regulation=(0, 0), final=(0, 0), overtime=False,
+    )
+    table_safety = builder.build([game_safety])
+    safety_pts = table_safety.point_values[("A", "g_safety")]
+    ctx = context_index(350.0, 0)
+    assert safety_pts[0][ctx, 21, ABSORBING_TO] == 0.0
+    assert safety_pts[1][ctx, 21, ABSORBING_TO] == 0.0
+
+    # Punt with switch=True should still map to ABSORBING_PUNT
+    punt_switch = _make_event(22, 25, True, 0, 0, 200, 0, play_type="punt")
+    game_punt = NFLExtractedGame(
+        game_id="g_punt", week=1, date="2024-01-01", home="A", away="B",
+        events=[punt_switch], starts=[], regulation=(0, 0), final=(0, 0), overtime=False,
+    )
+    table_punt = builder.build([game_punt])
+    punt_pts = table_punt.point_values[("A", "g_punt")]
+    ctx = context_index(200.0, 0)
+    assert punt_pts[0][ctx, 22, ABSORBING_PUNT] == 0.0
+    assert punt_pts[1][ctx, 22, ABSORBING_PUNT] == 0.0
 
     # Punt: separate event since play_type must be "punt"
     punt_event = _make_event(20, 25, False, 0, 0, 200, 0, play_type="punt")

@@ -66,7 +66,24 @@ def generate_dataset(request: DatasetRequest) -> DatasetResult:
         away_mat = table.matrices.get(away_key)
         if home_mat is None or away_mat is None:
             continue
-        observations.extend(extract_paired_observations(game, home_mat, away_mat, season=request.season))
+
+        home_prior = table.team_priors.get(home_key)
+        away_prior = table.team_priors.get(away_key)
+        home_prior_mat = home_prior[0] if home_prior is not None else None
+        away_prior_mat = away_prior[0] if away_prior is not None else None
+
+        observations.extend(extract_paired_observations(
+            game,
+            home_mat,
+            away_mat,
+            season=request.season,
+            home_prior=home_prior_mat,
+            away_prior=away_prior_mat,
+            global_prior=table.global_matrix,
+            start_state_probs=table.start_state_probs,
+            global_timing_mean=table.global_timing_mean,
+            global_timing_std=table.global_timing_std,
+        ))
 
     df = dataset_builder.build(observations)
     dataset_path = output / "vae_dataset.parquet"

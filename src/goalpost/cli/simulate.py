@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from goalpost.representation.nfl.model import NFLTransitionModel
+from goalpost.representation.nfl.builder import N_CONTEXTS, N_PHYSICAL_STATES
 from goalpost.representation.nfl.timing import load_timing_for_game
 from goalpost.simulation.nfl.weekly import weekly_runner
 
@@ -29,6 +30,8 @@ class SimulationResult:
 
 
 def _load_dataset_as_models(dataset_dir: Path) -> dict:
+    from goalpost.representation.nfl.builder import N_CONTEXTS, N_STATES
+
     parquet_path = dataset_dir / "vae_dataset.parquet"
     if not parquet_path.exists():
         return {}
@@ -38,12 +41,22 @@ def _load_dataset_as_models(dataset_dir: Path) -> dict:
     # Feature columns are prefixed by team and exclude metadata columns
     home_cols = [
         c for c in df.columns
-        if c.startswith("home_") and c not in ("home_team", "home_score", "home_available")
+        if c.startswith("home_") and c not in (
+            "home_team", "home_score", "home_available",
+            "home_prior_available",
+        ) and not c.startswith("home_prior_")
     ]
     away_cols = [
         c for c in df.columns
-        if c.startswith("away_") and c not in ("away_team", "away_score", "away_available")
+        if c.startswith("away_") and c not in (
+            "away_team", "away_score", "away_available",
+            "away_prior_available",
+        ) and not c.startswith("away_prior_")
     ]
+    # Prior columns (may not exist in older datasets)
+    home_prior_cols = [c for c in df.columns if c.startswith("home_prior_") and c != "home_prior_available"]
+    away_prior_cols = [c for c in df.columns if c.startswith("away_prior_") and c != "away_prior_available"]
+    global_prior_cols = [c for c in df.columns if c.startswith("global_prior_")]
 
     models = {}
     for game_id_tuple, group in df.group_by("game_id"):
@@ -72,13 +85,45 @@ def _load_dataset_as_models(dataset_dir: Path) -> dict:
             away_flat, away_team, game_id, home_team
         )
 
-        # Lightweight per-game fallback: average of both team matrices
-        blend = (home_model._matrix + away_model._matrix) / 2.0
-        home_model._fallback_matrix = blend.astype(np.float32)
-        away_model._fallback_matrix = blend.astype(np.float32)
+        def _reconstruct_matrix(prior_cols, rows, flattener):
+            """Unflatten per-context columns into a full (N_CONTEXTS, N, N) matrix."""
+            mats = []
+            for r in rows:
+                flat = np.array([r[c] for c in prior_cols], dtype=np.float32)
+                mats.append(flattener.unflatten(flat))
+            return np.stack(mats, axis=0)
+
+        # Load layered priors (layer 2 = team prior, layer 1 = global prior)
+        if home_prior_cols:
+            home_model.load_prior(_reconstruct_matrix(home_prior_cols, rows, home_model._flattener))
+        if away_prior_cols:
+            away_model.load_prior(_reconstruct_matrix(away_prior_cols, rows, away_model._flattener))
+        if global_prior_cols:
+            gp = _reconstruct_matrix(global_prior_cols, rows, home_model._flattener)
+            home_model.load_matrix(home_model._matrix, fallback_matrix=gp)
+            away_model.load_matrix(away_model._matrix, fallback_matrix=gp)
+
+        # Load start-state probabilities
+        start_cols = [c for c in rows[0].keys() if c.startswith("start_ctx_")]
+        if start_cols:
+            start_probs = np.zeros((N_CONTEXTS, N_PHYSICAL_STATES), dtype=np.float32)
+            for r in rows:
+                ctx = r["context_index"]
+                for c in start_cols:
+                    parts = c.split("_")
+                    if len(parts) == 5 and parts[1] == "ctx" and parts[3] == "state":
+                        s = int(parts[4])
+                        start_probs[ctx, s] = float(r[c])
+            home_model.load_start_states(start_probs)
+            away_model.load_start_states(start_probs)
+
+        # Load timing
+        timing_mean = rows[0].get("global_timing_mean")
+        if timing_mean is not None:
+            home_model.load_timing(float(timing_mean))
+            away_model.load_timing(float(timing_mean))
 
         # Load empirical timing from raw nflverse pbp (separate from VAE dataset)
-        # game_id may be a tuple from polars group_by
         gid_str = game_id[0] if isinstance(game_id, tuple) else game_id
         timing = load_timing_for_game(gid_str)
         if timing is not None:

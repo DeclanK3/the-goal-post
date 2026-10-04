@@ -29,6 +29,12 @@ class PairedContextObservation:
     away_matrix: np.ndarray     # (N, N)
     home_available: bool
     away_available: bool
+    home_prior: np.ndarray | None = None   # layer 2 team prior (N, N)
+    away_prior: np.ndarray | None = None
+    global_prior: np.ndarray | None = None   # layer 1 global prior (N, N)
+    start_state_probs: np.ndarray | None = None  # (N_CONTEXTS, N_PHYSICAL_STATES)
+    global_timing_mean: float | None = None
+    global_timing_std: float | None = None
 
 
 def _is_available(matrix: np.ndarray) -> bool:
@@ -37,7 +43,18 @@ def _is_available(matrix: np.ndarray) -> bool:
     return bool(np.any(np.isclose(row_sums, 1.0, atol=1e-6)))
 
 
-def extract_paired_observations(game, home_matrix: np.ndarray, away_matrix: np.ndarray, season: int = 0) -> list[PairedContextObservation]:
+def extract_paired_observations(
+    game,
+    home_matrix: np.ndarray,
+    away_matrix: np.ndarray,
+    season: int = 0,
+    home_prior: np.ndarray | None = None,
+    away_prior: np.ndarray | None = None,
+    global_prior: np.ndarray | None = None,
+    start_state_probs: np.ndarray | None = None,
+    global_timing_mean: float | None = None,
+    global_timing_std: float | None = None,
+) -> list[PairedContextObservation]:
     """Extract PairedContextObservation for each of the 9 contexts."""
     observations = []
     for ctx in range(N_CONTEXTS):
@@ -64,6 +81,12 @@ def extract_paired_observations(game, home_matrix: np.ndarray, away_matrix: np.n
                 away_matrix=away_ctx,
                 home_available=_is_available(home_ctx),
                 away_available=_is_available(away_ctx),
+                home_prior=home_prior[ctx] if home_prior is not None else None,
+                away_prior=away_prior[ctx] if away_prior is not None else None,
+                global_prior=global_prior[ctx] if global_prior is not None else None,
+                start_state_probs=start_state_probs,
+                global_timing_mean=global_timing_mean,
+                global_timing_std=global_timing_std,
             )
         )
     return observations
