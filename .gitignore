@@ -7,3 +7,7 @@ __pycache__/
 artifacts/
 dist/
 *.egg-info/
+
+# Local credentials are supplied through the environment, never committed.
+.env
+.env.*

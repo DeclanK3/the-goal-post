@@ -165,21 +165,15 @@ Each training example:
 
 The GameModel learns to predict this label from the features.
 
-## Downstream market comparison (implemented)
+## Downstream market comparison
 
-`goalpost.markets` is a separate consumer of the standard weekly simulation
-export; it does not alter the four modeling layers. Its supported path is:
+`SimulationGame` and `Market` in `goalpost.abc.markets` define the probabilistic
+output/contract interface. `NFLGame` implements it with exported regulation score
+PMFs; NFL moneyline, spread and total subclasses return win/push/loss mass.
+`AmericanOdds` converts that mass into hypothetical EV and Kelly sizing.
 
-```
-weekly PMFs + report/schedule metadata
-    -> export validation + exact dataset/hash/history checks
-    -> existing stored Odds API quotes (read-only SQLite)
-    -> exact FanDuel main-market probabilities and research EV/Kelly tables
-```
-
-`bridge.py` owns the CLI, export binding and synthetic demo; `history.py` checks
-public schedule coverage and actual simulation donors; `comparison.py` matches
-upcoming events and selects the latest main-market pairs; `pricing.py` contains
-PMF checks and pure win/push/loss and EV/Kelly arithmetic. The package includes no
-odds collection client, sender, live admission controller or betting operation.
-See [market sizing](docs/market-sizing.md) for the executable contract.
+`QuoteSource` has live `OddsAPISource` and opt-in read-only `SQLiteQuoteSource`
+implementations. `NFLComparison` handles event matching, latest-pair selection and
+freshness; `MarketTableJob` handles the CLI and CSV/JSON output. See the root README
+for environment gates and commands. This consumer does not change the modeling
+layers, database schema, production alerts or betting admission.

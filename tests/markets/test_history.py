@@ -1,117 +1,80 @@
+import json
+from unittest.mock import Mock
+
 import pandas as pd
+import polars as pl
 import pytest
 
-from goalpost.markets import history as m
+from goalpost.markets import history as module
+from goalpost.markets.history import NFLHistory
 
 
-def inputs():
-    schedule = pd.DataFrame(
+def schedule():
+    return pd.DataFrame(
         [
-            dict(
-                game_id="old",
-                season=2026,
-                gameday="2026-10-04",
-                game_type="REG",
-                home_team="A",
-                away_team="B",
-                home_score=20,
-                away_score=10,
-            ),
-            dict(
-                game_id="future",
-                season=2026,
-                gameday="2026-10-11",
-                game_type="REG",
-                home_team="A",
-                away_team="B",
-                home_score=None,
-                away_score=None,
-            ),
+            {
+                "game_id": "prior",
+                "season": 2026,
+                "gameday": "2026-10-11",
+                "game_type": "REG",
+                "home_team": "CLE",
+                "away_team": "PIT",
+                "home_score": 20,
+                "away_score": 10,
+            }
         ]
     )
-    meta = pd.DataFrame(
-        [
-            dict(
-                game_id="old",
-                game_date="2026-10-04",
-                home_team_id="A",
-                away_team_id="B",
-                matrix_status="parsed_regulation",
-                matrix_issue=None,
-            )
-        ]
-    )
-    return schedule, meta
 
 
-def test_complete_prior_games_and_future_missing_normal():
-    s, d = inputs()
-    r = m.assess(s, d, "2026-10-08T16:00:00Z")
-    assert r["status"] == "passed" and r["completed_games"] == 1
+def test_uses_nflreadpy_loader(export_path, now, monkeypatch):
+    report = json.loads((export_path / "report.json").read_text())
+    loader = Mock(return_value=pl.from_pandas(schedule()))
+    monkeypatch.setattr(module.nflreadpy, "load_schedules", loader)
+    checked = NFLHistory().check(report, now)
+    assert checked["status"] == "passed" and checked["completed_games"] == 1
+    loader.assert_called_once_with(seasons=[2026])
 
 
-@pytest.mark.parametrize("kind", ["missing", "rejected", "orientation"])
-def test_incomplete_history_blocks_with_denominators(kind):
-    s, d = inputs()
-    if kind == "missing":
-        d = d.iloc[0:0]
-    elif kind == "rejected":
-        d.loc[0, "matrix_status"] = "rejected"
-    else:
-        d.loc[0, "home_team_id"] = "B"
-    r = m.assess(s, d, "2026-10-08T16:00:00Z")
-    assert r["status"] == "blocked"
-    assert {e["team"] for e in r["errors"]} == {"A", "B"}
+def test_old_simulation_donors_block_even_with_current_schedule(export_path, now):
+    report = json.loads((export_path / "report.json").read_text())
+    report["results"][0]["provenance"]["teams"] = {}
+    checked = NFLHistory().assess(schedule(), report["results"], now)
+    assert checked["status"] == "blocked"
+    assert {error["team"] for error in checked["errors"]} == {"CLE", "PIT"}
 
 
-def test_old_simulation_cannot_be_relabelled_by_new_dataset():
-    s, d = inputs()
-    sim = {
-        "results": [
-            {"game": {"game_id": "future", "home": "A", "away": "B"}, "provenance": {"teams": {}}}
-        ]
-    }
-    r = m.assess(s, d, "2026-10-08T16:00:00Z", sim)
-    assert r["status"] == "blocked" and len(r["errors"]) == 2
-    assert all(e["reason"] == "simulation_omits_completed_history" for e in r["errors"])
+def test_unresolved_old_result_is_unknown_not_regraded(export_path, now):
+    report = json.loads((export_path / "report.json").read_text())
+    frame = schedule()
+    frame.loc[0, "home_score"] = None
+    checked = NFLHistory().assess(frame, report["results"], now)
+    assert checked["errors"][0]["reason"] == "prior_date_result_unknown"
 
 
-def test_read_failure_leaves_blocker_report(tmp_path, monkeypatch):
-    def fail(*a, **k):
-        raise OSError("offline")
-
-    monkeypatch.setattr(m.urllib.request, "urlopen", fail)
-    with pytest.raises(ValueError, match="freshness blocked"):
-        m.check(tmp_path, tmp_path / "check")
-    assert "offline" in (tmp_path / "check/report.json").read_text()
-
-
-def test_unresolved_past_date_is_unknown_not_graded():
-    s, d = inputs()
-    s.loc[0, "home_score"] = None
-    r = m.assess(s, d, "2026-10-08T16:00:00Z")
-    assert r["errors"][0]["reason"] == "prior_date_schedule_result_unresolved"
+@pytest.mark.parametrize("instant", ["2026-10-12T00:05:00Z", "2026-10-12T02:00:00Z"])
+def test_eastern_night_game_not_overdue_at_utc_midnight(instant):
+    frame = schedule()
+    frame.loc[0, "home_score"] = None
+    frame.loc[0, "gametime"] = "20:15"
+    checked = NFLHistory().assess(frame, [], pd.Timestamp(instant).to_pydatetime())
+    assert checked["status"] == "passed" and checked["unresolved_not_due"] == ["prior"]
 
 
-@pytest.mark.parametrize("now", ["2026-10-12T00:05:00Z", "2026-10-12T02:00:00Z"])
-def test_eastern_evening_game_is_not_overdue_at_utc_midnight(now):
-    s, d = inputs()
-    s.loc[1, "gametime"] = "20:15"
-    r = m.assess(s, d, now)
-    assert r["status"] == "passed"
-    assert r["unresolved_not_due"] == [
-        dict(
-            game_id="future",
-            kickoff_utc="2026-10-12T00:15:00+00:00",
-            reason="not_prior_utc_kickoff_date",
-        )
-    ]
+def test_no_upcoming_games_needs_no_history_fetch(now, monkeypatch):
+    loader = Mock()
+    monkeypatch.setattr(module.nflreadpy, "load_schedules", loader)
+    assert NFLHistory().check({"results": []}, now)["status"] == "not_required"
+    loader.assert_not_called()
 
 
-@pytest.mark.parametrize("gametime", ["20:15", "invalid", None])
-def test_older_or_unknown_kickoff_still_blocks(gametime):
-    s, d = inputs()
-    s.loc[1, "gametime"] = gametime
-    r = m.assess(s, d, "2026-10-13T02:00:00Z")
-    assert r["status"] == "blocked"
-    assert r["errors"][0]["reason"] == "prior_date_schedule_result_unresolved"
+def test_duplicate_schedule_rejected(export_path, now):
+    report = json.loads((export_path / "report.json").read_text())
+    with pytest.raises(ValueError, match="identity"):
+        NFLHistory().assess(pd.concat([schedule(), schedule()]), report["results"], now)
+
+
+def test_outdated_source_rejected(export_path, now):
+    frame = schedule()
+    frame.loc[0, "gameday"] = "2025-01-01"
+    with pytest.raises(ValueError, match="recent"):
+        NFLHistory().assess(frame, [], now)
