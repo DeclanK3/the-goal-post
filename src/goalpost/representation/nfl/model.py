@@ -1,0 +1,106 @@
+"""NFL-specific transition model."""
+import numpy as np
+
+from ..base.models import TransitionModel
+from .builder import N_STATES, N_CONTEXTS, N_PHYSICAL_STATES, build_validity_mask, ABSORBING_FG, ABSORBING_TD
+from .flatten import NFLFlattener
+from .timing import NFLTimingData
+
+
+class NFLTransitionModel(TransitionModel):
+    def __init__(self, team_id: str, game_id: str, opponent_id: str):
+        super().__init__(team_id, game_id, opponent_id)
+        self._matrix = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        self._own_points = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        self._opp_points = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        self._flat = None
+        self._flattener = NFLFlattener()
+        self._timing: NFLTimingData | None = None
+        # Layered prior and auxiliary data (I5, I8, I10)
+        self._team_prior_matrix: np.ndarray | None = None
+        self._start_state_probs: np.ndarray | None = None
+        self._global_timing_mean: float | None = None
+
+    @property
+    def state_space_size(self) -> int:
+        return N_STATES
+
+    @property
+    def context_count(self) -> int:
+        return N_CONTEXTS
+
+    @property
+    def validity_mask(self) -> np.ndarray:
+        return build_validity_mask()
+
+    def extract_from_game(self, game) -> None:
+        pass
+
+    def get_probabilities(self, context: int, state: int) -> dict[int, float]:
+        row = self._matrix[context, state]
+        nz = np.flatnonzero(row)
+        return {int(j): float(row[j]) for j in nz}
+
+    def get_point_values(self, context: int, state: int, next_state: int) -> tuple[float, float]:
+        own = float(self._own_points[context, state, next_state])
+        opp = float(self._opp_points[context, state, next_state])
+        # Fallback defaults for known absorbing outcomes when explicit values aren't stored
+        if next_state == ABSORBING_FG and own == 0.0:
+            own = 3.0
+        elif next_state == ABSORBING_TD and own == 0.0:
+            own = 7.0
+        return own, opp
+
+    def flatten(self) -> np.ndarray:
+        if self._flat is not None:
+            return self._flat
+        flat = np.concatenate([self._flattener.flatten(self._matrix[c]) for c in range(N_CONTEXTS)])
+        self._flat = flat
+        return flat
+
+    @classmethod
+    def from_flat(cls, array: np.ndarray, team_id: str, game_id: str, opponent_id: str):
+        obj = cls(team_id, game_id, opponent_id)
+        mask = build_validity_mask()
+        n_masked = mask.sum()
+        expected_len = N_CONTEXTS * n_masked
+        if len(array) != expected_len:
+            raise ValueError(f"flat length mismatch: {len(array)} != {expected_len}")
+        obj._matrix = np.zeros((N_CONTEXTS, N_STATES, N_STATES), dtype=np.float32)
+        flat_idx = 0
+        for c in range(N_CONTEXTS):
+            vals = array[flat_idx:flat_idx + n_masked]
+            obj._matrix[c] = obj._flattener.unflatten(vals)
+            flat_idx += n_masked
+        # Default point values for absorbing states (TD=7 matches empirical mode)
+        for c in range(N_CONTEXTS):
+            obj._own_points[c, :, ABSORBING_FG] = 3.0
+            obj._own_points[c, :, ABSORBING_TD] = 7.0
+        return obj
+
+    def load_matrix(self, matrix: np.ndarray, own_points: np.ndarray | None = None, opp_points: np.ndarray | None = None, fallback_matrix: np.ndarray | None = None):
+        if matrix.shape != (N_CONTEXTS, N_STATES, N_STATES):
+            raise ValueError(f"matrix shape mismatch: {matrix.shape}")
+        self._matrix = matrix.astype(np.float32)
+        self._flat = None
+        if own_points is not None and opp_points is not None:
+            self._own_points = own_points.astype(np.float32)
+            self._opp_points = opp_points.astype(np.float32)
+        if fallback_matrix is not None:
+            self._fallback_matrix = fallback_matrix.astype(np.float32)
+
+    def load_prior(self, team_prior: np.ndarray | None = None):
+        if team_prior is not None:
+            if team_prior.shape != (N_CONTEXTS, N_STATES, N_STATES):
+                raise ValueError(f"team_prior shape mismatch: {team_prior.shape}")
+            self._team_prior_matrix = team_prior.astype(np.float32)
+
+    def load_start_states(self, start_state_probs: np.ndarray | None = None):
+        if start_state_probs is not None:
+            if start_state_probs.shape != (N_CONTEXTS, N_PHYSICAL_STATES):
+                raise ValueError(f"start_state_probs shape mismatch: {start_state_probs.shape}")
+            self._start_state_probs = start_state_probs.astype(np.float32)
+
+    def load_timing(self, global_timing_mean: float | None = None):
+        if global_timing_mean is not None:
+            self._global_timing_mean = float(global_timing_mean)

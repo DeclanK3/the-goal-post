@@ -1,214 +1,168 @@
-# Basketball Betting Simulator
+# GoalPost: NFL Transition Modeling
 
-MCMC-based NCAAB betting simulator. Scrapes play-by-play data from StatBroadcast,
-builds transition matrices, simulates 50k games, and compares model probabilities
-against book lines to find edges.
+GoalPost is a sport-agnostic framework for extracting football play-by-play data into transition matrices, simulating game outcomes, and building VAE-ready datasets from paired team-context observations. The NFL-specific implementation uses [nflverse](https://github.com/nflverse/nflverse-data) play-by-play data as its source of truth.
 
-## Setup
+## Architecture
 
-```bash
-# Python dependencies
-pip install requests numpy matplotlib
+The codebase is organized into generic (sport-agnostic) and sport-specific layers:
 
-# Node dependencies (for game ID scraping)
-npm install puppeteer
+| Layer | Purpose | NFL Implementation |
+|-------|---------|-------------------|
+| `goalpost.data.base` | Generic data-source abstractions (`DataSource`, `Game`, `Play`, `Possession`) | `goalpost.data.nfl` |
+| `goalpost.data.nfl` | NFL-specific data acquisition and parsing | `NFLDataSource`, `fetcher.py`, `schedule.py` |
+| `goalpost.representation.base` | Generic extraction, transition building, imputation | `GameExtractor`, `TransitionBuilder`, `Imputer` |
+| `goalpost.representation.nfl` | NFL-specific extraction and transition modeling | `NFLGameExtractor`, `NFLTransitionBuilder`, `VAEDatasetBuilder` |
+| `goalpost.simulation.base` | Generic simulation engine and market models | `Simulator`, `Market` |
+| `goalpost.simulation.nfl` | NFL-specific simulation and weekly scheduling | `weekly_runner` |
+| `goalpost.cli` | Command-line entry points | `--build`, `--simulate` |
+| `goalpost.tui` | Interactive terminal UI | `run_tui()` |
 
-# Get a free Odds API key (500 req/month free)
-# https://the-odds-api.com
+### Key design principles
 
-# Set your API key in your environment
-export ODDS_API=your_key_here
+- **Sport-agnostic core:** The generic layers (`base`) define abstractions that could support other sports. NFL specifics are confined to `goalpost.data.nfl` and `goalpost.representation.nfl`.
+- **No synthetic data in production:** Production code never generates, substitutes, or silently falls back to synthetic data. Missing or unavailable real data produces a clear failure. Synthetic data is strictly confined to tests for mocking and fixtures.
+- **Explicit data acquisition:** The real-data path downloads nflverse release assets directly. There is no hidden caching, no fallback to demo data, and no silent production of empty datasets.
+
+## Install and test
+
+Requires Python 3.12+:
+
+```sh
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m pytest -q
 ```
 
-## Files
+## CLI usage
 
-| File | Purpose |
-|------|---------|
-| `basketball_betting.py` | Main script |
-| `get_game_ids.js` | Puppeteer scraper for StatBroadcast game IDs |
-| `game_xml_cache/` | Auto-created cache dir for XMLs, GIDs, name mappings |
+### Build a VAE-ready dataset from nflverse data
 
----
+Download real NFLverse play-by-play data and build the transition dataset in one command:
 
-## Commands
-
-### Single Game
-
-Analyze one specific matchup with auto-fetched lines:
-
-```bash
-python basketball_betting.py \
-  --visitor okst \
-  --home hou \
-  --odds-api-key $SPORT_API \
-  --kelly 0.25 \
-  --plot output.png
+```sh
+python -m goalpost.cli.build \
+  --seasons 2023,2024,2025 \
+  --output artifacts/dataset
 ```
 
-With a specific book:
+This will:
+1. Download `play_by_play_{season}.parquet` from nflverse releases for each requested season
+2. Cache the raw files in `~/.cache/goalpost/nflverse/`
+3. Extract games, build transition matrices, and generate paired context observations
+4. Write `vae_dataset.parquet` and `vae_schema.json` to `--output`
 
-```bash
-python basketball_betting.py \
-  --visitor okst \
-  --home hou \
-  --odds-api-key $SPORT_API \
-  --book draftkings \
-  --kelly 0.25 \
-  --plot output.png
+You can also provide pre-existing local parquet files:
+
+```sh
+python -m goalpost.cli.build \
+  --sources /path/to/local/parquets \
+  --output artifacts/dataset
 ```
 
-With manual lines (no API key needed):
+**One of `--seasons` or `--sources` is required; both together is an error.**
 
-```bash
-python basketball_betting.py \
-  --visitor okst \
-  --home hou \
-  --total 130.5 --over-odds -110 --under-odds -110 \
-  --spread -7.5 --vis-spread-odds -110 --home-spread-odds -110 \
-  --visitor-ml +260 --home-ml -320 \
-  --kelly 0.25 \
-  --plot output.png
+#### Validation
+
+Downloaded nflverse data is validated against the required schema before any processing begins. If a season's release asset is missing or the schema is unexpected, the command fails with a clear `NFLverseError` — no synthetic or empty substitute is produced.
+
+### Run simulations
+
+```sh
+python -m goalpost.cli.simulate \
+  --dataset artifacts/dataset \
+  --week 5 \
+  --season 2024 \
+  --n-sims 10000
 ```
 
-Filter to specific markets only:
+### Interactive TUI
 
-```bash
-python basketball_betting.py \
-  --visitor okst --home hou \
-  --odds-api-key $SPORT_API \
-  --book draftkings \
-  --kelly 0.25 \
-  --markets spread total
+Launch the terminal UI with no arguments:
+
+```sh
+python -m goalpost
 ```
 
----
+From the TUI you can:
+- **Generate Dataset:** Provide a sources directory, or type `download` to fetch nflverse data directly
+- **Run Simulation:** Select a built dataset directory, week, and season
+- **Inspect Game:** Load and inspect any parquet file
 
-### Daily Screener
+## Data flow
 
-Screen all games today, ranked by edge:
-
-```bash
-python basketball_betting.py \
-  --screen \
-  --odds-api-key $SPORT_API \
-  --kelly 0.25
+```
+User specifies seasons (--seasons)
+           |
+           v
+    fetch_nflverse([2023, 2024, 2025])
+           |
+           v
+    Cache: ~/.cache/goalpost/nflverse/nfl-{season}.parquet
+           |
+           v
+    NFLDataSource.parse() -> List[Game]
+           |
+           v
+    extract_game() -> NFLExtractedGame
+           |
+           v
+    NFLTransitionBuilder.build() -> per-team transition matrices
+           |
+           v
+    extract_paired_observations() -> PairedContextObservation[]
+           |
+           v
+    VAEDatasetBuilder.build() -> pl.DataFrame
+           |
+           v
+    Write: {output}/vae_dataset.parquet + vae_schema.json
 ```
 
-With a specific book:
+## NFLverse source
 
-```bash
-python basketball_betting.py \
-  --screen \
-  --odds-api-key $SPORT_API \
-  --book draftkings \
-  --kelly 0.25
+The downloader reads directly from nflverse GitHub release assets:
+
+```
+https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet
 ```
 
-Filter to spreads only:
+Polars reads these Parquet files over HTTPS. No API keys, credentials, or environment variables are required. Each season is downloaded and validated independently; a failure for any season aborts the entire build with a clear error.
 
-```bash
-python basketball_betting.py \
-  --screen \
-  --odds-api-key $SPORT_API \
-  --book draftkings \
-  --kelly 0.25 \
-  --markets spread
-```
+## Output artifacts
 
-Screen a specific date:
+After a successful build, the output directory contains:
 
-```bash
-python basketball_betting.py \
-  --screen \
-  --date 2026-03-07 \
-  --odds-api-key $SPORT_API \
-  --book fanduel \
-  --kelly 0.25 \
-  --top 15
-```
-
-Unattended (skip uncertain team matches instead of prompting):
-
-```bash
-python basketball_betting.py \
-  --screen \
-  --odds-api-key $SPORT_API \
-  --kelly 0.25 \
-  --no-interactive
-```
-
----
-
-## All Flags
-
-### Teams
-| Flag | Description |
+| File | Description |
 |------|-------------|
-| `--visitor GID` | Visitor team StatBroadcast GID (e.g. `okst`) |
-| `--home GID` | Home team StatBroadcast GID (e.g. `hou`) |
+| `vae_dataset.parquet` | Paired context observations per game, flattened transition features |
+| `vae_schema.json` | Column manifest: context columns, home/away feature names, total count |
 
-### Odds / Lines
-| Flag | Description |
-|------|-------------|
-| `--odds-api-key KEY` | The Odds API key for auto-fetching lines |
-| `--book BOOK` | Preferred book: `draftkings`, `fanduel`, `betmgm`, `caesars` |
-| `--total LINE` | Over/under line, e.g. `130.5` |
-| `--over-odds ODDS` | American odds for over, e.g. `-110` |
-| `--under-odds ODDS` | American odds for under, e.g. `-110` |
-| `--spread LINE` | Spread from visitor perspective, e.g. `-4.5` |
-| `--vis-spread-odds ODDS` | Visitor spread odds |
-| `--home-spread-odds ODDS` | Home spread odds |
-| `--visitor-ml ODDS` | Visitor moneyline |
-| `--home-ml ODDS` | Home moneyline |
+The dataset schema includes:
+- Context columns: `game_id`, `season`, `week`, `date`, `home_team`, `away_team`, `context_index`, `time_bin`, `score_bin`, `home_score`, `away_score`, `home_available`, `away_available`
+- Home features: `home_{state}_to_{state}` for each valid transition
+- Away features: `away_{state}_to_{state}` for each valid transition
 
-### Screener
-| Flag | Description |
-|------|-------------|
-| `--screen` | Run daily screener mode |
-| `--date YYYY-MM-DD` | Date to screen (default: today) |
-| `--top N` | Number of top bets to show (default: 10) |
-| `--markets` | Filter markets: `ml`, `spread`, `total` (default: all) |
-| `--no-interactive` | Skip uncertain GID matches instead of prompting |
+A missing or unavailable dataset must produce a clear failure; the production pipeline never fabricates or substitutes synthetic data.
 
-### Simulation
-| Flag | Description |
-|------|-------------|
-| `--nsim N` | Number of simulations (default: 50000) |
-| `--n-games N` | Recent games to blend per team (default: 5) |
-| `--n-poss N` | Override possessions per game |
-| `--weighting` | `recency` (default) or `equal` |
-| `--kelly FLOAT` | Kelly fraction, e.g. `0.25` = quarter Kelly (default: `1.0`) |
-| `--seed N` | Random seed (default: 42) |
+## Tests and synthetic data policy
 
-### Output
-| Flag | Description |
-|------|-------------|
-| `--plot FILE` | Save simulation plot to PNG |
-| `--json FILE` | Save full results to JSON |
-| `--list-gids` | Print all known StatBroadcast team GIDs |
-| `--refresh-gids` | Re-scrape the GID list even if cached |
+The test suite is fully offline. Synthetic data is used **only** inside tests for mocking and fixtures:
 
----
+- `tests/cli/test_integration.py` — `_make_synthetic_parquet()` creates minimal rows for CLI integration tests
+- `tests/data/nfl/test_fetcher.py` — mocked nflverse downloads validate the download path without making network requests
+- `tests/representation/nfl/test_dataset.py` — `_make_observation()` creates toy observations for unit tests
 
-## Kelly Criterion
+**No synthetic or demo data is ever created, consumed, or substituted by production code.** The production `build` CLI and TUI require either a valid local sources directory or a successful nflverse download. Empty or missing inputs raise `FileNotFoundError` or `ValueError`; bad downloads raise `NFLverseError`.
 
-Kelly stake = `(b×p - q) / b × fraction` where:
-- `p` = model win probability
-- `q` = 1 - p
-- `b` = net decimal odds
+## Known limitations
 
-Common fractions:
-- `--kelly 1.0` — full Kelly (aggressive, mathematically optimal)
-- `--kelly 0.5` — half Kelly (recommended for most bettors)
-- `--kelly 0.25` — quarter Kelly (conservative, lower variance)
+- The extraction supports NFL regulation play only. Overtime, preseason, and special-teams scoring details are not fully modeled.
+- College football support exists in the architecture but is not currently wired to a live data source.
+- The VAE dataset is a structured representation of transition probabilities; it does not itself train a VAE.
+- Simulation outputs are exploratory and not validated betting probabilities.
 
-## GID Cache
+## License
 
-The first time you run the screener, uncertain team name matches will prompt
-you to select the correct StatBroadcast GID. Confirmed mappings are saved to
-`game_xml_cache/name_to_gid.json` and reused automatically on future runs.
-
-To see all available GIDs:
-```bash
-python basketball_betting.py --list-gids
-```
+MIT
+>>>>>>> fix/scoring-transitions
