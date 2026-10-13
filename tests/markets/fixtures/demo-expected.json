@@ -1,0 +1,74 @@
+[
+  {
+    "market": "h2h",
+    "participant": "Example Home",
+    "line": null,
+    "odds": -200,
+    "p_win": 0.7,
+    "p_push_or_regulation_tie": 0.1,
+    "p_loss": 0.2,
+    "hypothetical_ev_pct": 14.999999999999996,
+    "full_kelly_pct": 33.33333333333333,
+    "quarter_kelly_pct": 8.333333333333332
+  },
+  {
+    "market": "spreads",
+    "participant": "Example Away",
+    "line": 3.0,
+    "odds": 100,
+    "p_win": 0.30000000000000004,
+    "p_push_or_regulation_tie": 0.4,
+    "p_loss": 0.3,
+    "hypothetical_ev_pct": 5.551115123125783e-15,
+    "full_kelly_pct": 9.25185853854297e-15,
+    "quarter_kelly_pct": 2.3129646346357427e-15
+  },
+  {
+    "market": "totals",
+    "participant": "Under",
+    "line": 43.0,
+    "odds": 100,
+    "p_win": 0.30000000000000004,
+    "p_push_or_regulation_tie": 0.4,
+    "p_loss": 0.3,
+    "hypothetical_ev_pct": 5.551115123125783e-15,
+    "full_kelly_pct": 9.25185853854297e-15,
+    "quarter_kelly_pct": 2.3129646346357427e-15
+  },
+  {
+    "market": "spreads",
+    "participant": "Example Home",
+    "line": -3.0,
+    "odds": -110,
+    "p_win": 0.3,
+    "p_push_or_regulation_tie": 0.4,
+    "p_loss": 0.30000000000000004,
+    "hypothetical_ev_pct": -2.7272727272727337,
+    "full_kelly_pct": 0,
+    "quarter_kelly_pct": 0.0
+  },
+  {
+    "market": "totals",
+    "participant": "Over",
+    "line": 43.0,
+    "odds": -110,
+    "p_win": 0.3,
+    "p_push_or_regulation_tie": 0.4,
+    "p_loss": 0.30000000000000004,
+    "hypothetical_ev_pct": -2.7272727272727337,
+    "full_kelly_pct": 0,
+    "quarter_kelly_pct": 0.0
+  },
+  {
+    "market": "h2h",
+    "participant": "Example Away",
+    "line": null,
+    "odds": 170,
+    "p_win": 0.2,
+    "p_push_or_regulation_tie": 0.1,
+    "p_loss": 0.7,
+    "hypothetical_ev_pct": -35.99999999999999,
+    "full_kelly_pct": 0,
+    "quarter_kelly_pct": 0.0
+  }
+]

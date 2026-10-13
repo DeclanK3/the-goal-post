@@ -1,0 +1,22 @@
+{
+  "regulation_only": true,
+  "betting_admitted": false,
+  "synthetic_demo": true,
+  "dataset_hashes": {},
+  "results": [
+    {
+      "game": {
+        "game_id": "DEMO_AWAY_HOME",
+        "home": "H",
+        "away": "A",
+        "kickoff_utc": "2000-01-02T18:00:00Z"
+      },
+      "attempted": 120,
+      "n": 100,
+      "status": "simulated",
+      "diagnostics": {
+        "grace_completed_games": 5
+      }
+    }
+  ]
+}

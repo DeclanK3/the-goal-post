@@ -293,3 +293,31 @@ Legacy v1 artifacts can fail this check and should be rebuilt, not relabeled.
 The elapsed clock, under-ten-second approximation and separately preserved final
 boundary scoring remain unchanged. No experimental clock model, VAE training,
 state-space redesign or alternate extraction ordering is introduced here.
+
+## Compare Astra exports to stored market prices
+
+The downstream market-table bridge is available as `python -m goalpost.markets`
+(or `goalpost-market-sizing` after installation). It consumes the standard weekly
+PMF CSVs and their unchanged JSON metadata, reads existing stored Odds API quotes,
+and writes hypothetical regulation EV / full and quarter-Kelly tables.
+
+```bash
+# Offline smoke test: synthetic inputs, no credentials or network.
+python -m goalpost.markets --demo
+
+# Validate a standard weekly export without prices or network.
+python -m goalpost.markets --export /path/to/weekly-export --validate-only
+
+# Use the exact export dataset and an accessible existing engine quote database.
+python -m goalpost.markets --export /path/to/weekly-export \
+  --data /path/to/export-dataset --database /path/to/betting.db
+```
+
+See [the market bridge guide](docs/market-sizing.md) for the input and database
+schemas, table columns, freshness exclusions, example answers and limitations.
+The adapter reads the engine's SQLite store; it is **not a paid Odds API client**.
+A CSV bundle alone can be validated; live comparison also needs the matching
+dataset and access to that store. Uncommitted or differently shaped Astra exports
+need explicit schema review. This command neither simulates again nor changes
+models, production settings, holds, alerts or studies. The model remains
+uncalibrated and regulation-only; actual sportsbook-contract EV/Kelly stays unset.

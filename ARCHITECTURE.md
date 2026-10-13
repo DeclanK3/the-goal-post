@@ -164,3 +164,22 @@ Each training example:
 ```
 
 The GameModel learns to predict this label from the features.
+
+## Downstream market comparison (implemented)
+
+`goalpost.markets` is a separate consumer of the standard weekly simulation
+export; it does not alter the four modeling layers. Its supported path is:
+
+```
+weekly PMFs + report/schedule metadata
+    -> export validation + exact dataset/hash/history checks
+    -> existing stored Odds API quotes (read-only SQLite)
+    -> exact FanDuel main-market probabilities and research EV/Kelly tables
+```
+
+`bridge.py` owns the CLI, export binding and synthetic demo; `history.py` checks
+public schedule coverage and actual simulation donors; `comparison.py` matches
+upcoming events and selects the latest main-market pairs; `pricing.py` contains
+PMF checks and pure win/push/loss and EV/Kelly arithmetic. The package includes no
+odds collection client, sender, live admission controller or betting operation.
+See [market sizing](docs/market-sizing.md) for the executable contract.

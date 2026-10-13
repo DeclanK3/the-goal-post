@@ -1,0 +1,28 @@
+{
+  "synthetic_demo": true,
+  "events": [
+    {
+      "competitions": [
+        {
+          "competitors": [
+            {
+              "team": {
+                "abbreviation": "H",
+                "displayName": "Example Home"
+              },
+              "homeAway": "home"
+            },
+            {
+              "team": {
+                "abbreviation": "A",
+                "displayName": "Example Away"
+              },
+              "homeAway": "away"
+            }
+          ]
+        }
+      ],
+      "date": "2000-01-02T18:00:00Z"
+    }
+  ]
+}
