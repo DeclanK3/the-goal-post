@@ -164,12 +164,8 @@ class NFLTransitionBuilder(TransitionBuilder):
                     if src >= N_PHYSICAL_STATES:
                         continue
                     counts[ctx, src, dst] += 1
-                    # I11: safeties are not modeled; zero the points
-                    if e.own_points == 2:
-                        own_pts_sum[ctx, src, dst] += 0.0
-                        opp_pts_sum[ctx, src, dst] += 0.0
-                    elif e.opponent_points == 2 and dst == ABSORBING_TO:
-                        # Defensive safety (opponent scored 2 on our TO) -> not modeled
+                    # I11: safeties and defensive/special-teams scores are not modeled
+                    if e.own_points == 2 or e.opponent_points > 0:
                         own_pts_sum[ctx, src, dst] += 0.0
                         opp_pts_sum[ctx, src, dst] += 0.0
                     else:

@@ -26,23 +26,32 @@ class NFLTimingData:
     """
 
     def __init__(self):
-        # Primary timing: dict[(ctx, src, dst)] -> np.ndarray of elapsed times
-        self._primary: dict[tuple[int, int, int], np.ndarray] = {}
-        # Fallback timing: dict[(bucket, src, dst)] -> np.ndarray of elapsed times
-        self._fallback: dict[tuple[int, int, int], np.ndarray] = {}
+        # Primary timing: dict[(ctx, src, dst)] -> list[float] of elapsed times
+        self._primary: dict[tuple[int, int, int], list[float]] = {}
+        # Fallback timing: dict[(bucket, src, dst)] -> list[float] of elapsed times
+        self._fallback: dict[tuple[int, int, int], list[float]] = {}
         self._validated = False
 
+    def add(self, ctx: int, src: int, dst: int, elapsed: float) -> None:
+        """Append an elapsed-time observation to primary and fallback stores."""
+        if not np.isfinite(elapsed) or elapsed < 0:
+            return
+        key = (ctx, src, dst)
+        self._primary.setdefault(key, []).append(float(elapsed))
+        bucket = _time_bucket(ctx)
+        self._fallback.setdefault((bucket, src, dst), []).append(float(elapsed))
+
     def _set_primary(self, key: tuple[int, int, int], arr: np.ndarray) -> None:
-        self._primary[key] = arr
+        self._primary[key] = arr.tolist()
 
     def _set_fallback(self, key: tuple[int, int, int], arr: np.ndarray) -> None:
-        self._fallback[key] = arr
+        self._fallback[key] = arr.tolist()
 
-    def get(self, ctx: int, src: int, dst: int) -> np.ndarray | None:
+    def get(self, ctx: int, src: int, dst: int) -> list[float] | None:
         """Return primary timing array, or None if absent."""
         return self._primary.get((ctx, src, dst))
 
-    def get_fallback(self, ctx: int, src: int, dst: int) -> np.ndarray | None:
+    def get_fallback(self, ctx: int, src: int, dst: int) -> list[float] | None:
         """Return same-time-bucket fallback timing array, or None."""
         return self._fallback.get((_time_bucket(ctx), src, dst))
 

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from goalpost.representation.nfl.builder import (
     NFLTransitionBuilder, _map_destination, build_validity_mask, ABSORBING_TD,
@@ -6,6 +7,7 @@ from goalpost.representation.nfl.builder import (
 )
 from goalpost.representation.nfl.extractor import NFLExtractedGame, NFLEvent
 from goalpost.representation.nfl.model import NFLTransitionModel
+from goalpost.representation.nfl.timing import NFLTimingData
 from goalpost.simulation.nfl.engine import NFLEngine
 
 
@@ -239,3 +241,42 @@ def test_edge_case_mappings():
     ctx = context_index(200.0, 0)  # ctx=1
     assert home_pts2[0][ctx, 20, ABSORBING_PUNT] == 0.0
     assert home_pts2[1][ctx, 20, ABSORBING_PUNT] == 0.0
+
+    # Defensive TD: opponent_points > 0 on offense possession -> I11: not modeled
+    def_td_event = _make_event(23, 24, True, 0, 7, 400, 0)
+    game_def_td = NFLExtractedGame(
+        game_id="g_def_td", week=1, date="2024-01-01", home="A", away="B",
+        events=[def_td_event], starts=[], regulation=(0, 0), final=(0, 0), overtime=False,
+    )
+    table_def_td = builder.build([game_def_td])
+    def_td_pts = table_def_td.point_values[("A", "g_def_td")]
+    ctx = context_index(400.0, 0)
+    assert def_td_pts[0][ctx, 23, ABSORBING_TO] == 0.0
+    assert def_td_pts[1][ctx, 23, ABSORBING_TO] == 0.0
+
+
+def test_timing_add_and_sample():
+    """NFLTimingData.add() stores elapsed times; sample_duration returns one."""
+    timing = NFLTimingData()
+    timing.add(ctx=0, src=16, dst=17, elapsed=25.0)
+    timing.add(ctx=0, src=16, dst=17, elapsed=35.0)
+    timing.add(ctx=0, src=16, dst=17, elapsed=45.0)
+
+    # Primary retrieval
+    primary = timing.get(0, 16, 17)
+    assert primary is not None
+    assert sorted(primary) == [25.0, 35.0, 45.0]
+
+    # Fallback retrieval (same time bucket)
+    fallback = timing.get_fallback(0, 16, 17)
+    assert fallback is not None
+    assert sorted(fallback) == [25.0, 35.0, 45.0]
+
+    # Sampling returns one of the stored values
+    rng = np.random.default_rng(42)
+    samples = [timing.sample_duration(0, 16, 17, rng) for _ in range(30)]
+    assert all(s in (25.0, 35.0, 45.0) for s in samples)
+
+    # Missing key raises ValueError
+    with pytest.raises(ValueError):
+        timing.sample_duration(0, 0, 0, rng)
