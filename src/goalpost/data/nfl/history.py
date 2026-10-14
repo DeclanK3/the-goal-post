@@ -1,6 +1,9 @@
-"""Check reported simulation donors against the NFLverse Python schedule loader."""
+# Purpose: check reported simulation donors against the maintained NFLverse schedule.
+# Public API: NFLHistory.check loads evidence; assess accepts an existing DataFrame.
+# Consumers: MarketTableJob gates quote acquisition on completed-game donor coverage.
 
 from datetime import datetime
+from typing import Any
 
 import nflreadpy
 import pandas as pd
@@ -8,10 +11,13 @@ import pandas as pd
 from goalpost.data.base.odds import timestamp
 
 
+# Purpose: keep stale donor coverage from being mistaken for current-season modeling.
+# Consumers: the shared CLI/TUI report job; this is a coverage check, not calibration.
 class NFLHistory:
-    """Current pricing requires completed current-season games in the export's donors."""
 
-    def check(self, report: dict, now: datetime) -> dict:
+    # Purpose: fetch schedule evidence only when imported simulations are still upcoming.
+    # Callers: MarketTableJob.run; failures stop the job before a paid odds request.
+    def check(self, report: dict[str, Any], now: datetime) -> dict[str, Any]:
         results = [
             result
             for result in report["results"]
@@ -24,7 +30,11 @@ class NFLHistory:
         schedule = nflreadpy.load_schedules(seasons=seasons).to_pandas()
         return self.assess(schedule, results, now)
 
-    def assess(self, schedule: pd.DataFrame, results: list[dict], now: datetime) -> dict:
+    # Purpose: compare reported donors with completed games while preserving unknown finals.
+    # Callers: check and offline tests; supplied schedule evidence is never regraded.
+    def assess(
+        self, schedule: pd.DataFrame, results: list[dict[str, Any]], now: datetime
+    ) -> dict[str, Any]:
         required = {
             "season",
             "game_id",
@@ -47,7 +57,8 @@ class NFLHistory:
         ):
             raise ValueError("No recent NFL schedule evidence")
         completed = prior[prior.home_score.notna() & prior.away_score.notna()]
-        errors, not_due = [], []
+        errors: list[dict[str, Any]] = []
+        not_due: list[str] = []
         pending = prior[prior.home_score.isna() | prior.away_score.isna()]
         for game in pending.to_dict("records"):
             kickoff = pd.NaT
