@@ -1,0 +1,29 @@
+# Purpose: check review slices and source documentation without executing PR code.
+# Interface: read-only PR metadata and immutable Python blobs; reports review-contract.
+# Consumers: Ryan's review cycle. A repository admin must make this check required.
+name: Review contract
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  review-contract:
+    runs-on: ubuntu-latest
+    steps:
+      # Always run the approved policy from main, never code from the PR's checkout.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check policy regression fixtures
+        run: python tools/review_contract.py --self-test
+      - name: Check current PR metadata and Python blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python tools/review_contract.py --pr "$PR_NUMBER"
