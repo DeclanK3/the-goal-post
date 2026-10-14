@@ -183,3 +183,62 @@ missing backend is reported explicitly instead of disappearing into the screen.
 
 The offline TUI tests exercise menu actions and cleanup using a terminal double;
 they do not require a native library or mutate the test runner's terminal.
+## Generate an EV/Kelly report from Astra simulation exports
+
+The **Generate Report** TUI option and `--report` CLI use the same job. This
+ports the architecture-scaffold odds integration into `main` without replacing
+its representation or simulation implementation:
+
+| Layer | Responsibility |
+|---|---|
+| `data.base.odds` | Abstract `QuoteSource`, event/quote records and timestamps |
+| `data.nfl.odds` | Explicit NFL Odds API and read-only local database adapters |
+| `simulation.base.markets`, `simulation.base.pricing` | Abstract simulation/market contracts, outcome mass and push-aware EV/Kelly |
+| `simulation.nfl` | NFL moneyline/spread/total settlement, export validation and exact quote comparison |
+| `cli.report`, `tui.report` | Shared report job and user entry points |
+
+After installing the package, run:
+
+```sh
+python -m goalpost --report --export /path/to/astra-export --validate-only
+python -m goalpost --report --export /path/to/astra-export --live
+python -m goalpost.cli.report --export /path/to/astra-export --live
+python -m goalpost --report --export /path/to/astra-export --database /path/to/betting.db
+```
+
+In the TUI, select **Generate Report**, enter the export directory and explicitly
+choose `live`, `database`, or `validate`. The live selection makes one paid NFL
+main-market request; no retries or background polling. It reads **`ODDS_API`**
+from the environment, never a UI field, CLI argument or committed configuration.
+The database option requires **`GOALPOST_LOCAL_DB_ENABLED=true`** and opens an
+existing store read-only; it never creates or migrates a database. Validation
+makes no network requests. Live/database pricing also checks donor coverage
+against the public schedule using `nflreadpy.load_schedules`.
+
+The input is the existing Astra weekly export format: `report.json`,
+`schedule.csv`, `schedule-espn.json`, and one directory per game containing
+`total-pmf.csv` and `home_minus_away-pmf.csv` with `points,count,probability`.
+Reports must declare `regulation_only: true`, retain attempted/retained counts,
+and include the original team donor provenance and schedule event identity.
+PMFs and home/away identities are validated before any odds request. The current
+`--simulate` summary-only output is not this export format; it cannot be priced
+at arbitrary lines and is rejected, never converted to an invented PMF.
+
+Each new output directory contains `ev-kelly.csv`/JSON for all evaluated rows,
+`current-market-sizing.csv`/JSON with fresh rows sorted by EV, `matchups.json`,
+`quote-evidence.json`, and `report.json`. Missing, stale and excluded rows remain
+visible. Both capture and provider timestamps must be within 30 minutes; only
+complete latest main-market pairs for uniquely matched upcoming games qualify.
+There is no fallback to older lines or alternates. Failed runs retain
+`failure.json`; existing output directories are refused. Unknown charge headers
+remain unknown.
+
+CLI options include `--output`, `--book` (default fanduel), `--bankroll` (optional),
+`--max-quote-age-minutes` (30) and `--kickoff-tolerance-seconds` (600). No bankroll
+is assumed. EV uses the offered payout and simulation win/loss mass; pushes
+return the stake. Single-contract Kelly fractions must not be added together.
+
+All values are **hypothetical regulation-only research EV/Kelly**. Calibration
+and overtime-inclusive contract validation remain unresolved; actual-contract
+EV/Kelly stays null. This integration does not enable alerts, place bets, update
+a ledger, retrain a model or change the existing research cohorts.

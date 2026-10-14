@@ -16,6 +16,9 @@ def main():
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         from goalpost.cli.build import main as build_main
         build_main()
+    elif cmd == "--report":
+        from goalpost.cli.report import main as report_main
+        report_main(sys.argv[2:])
     elif cmd == "--simulate":
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         from goalpost.cli.simulate import main as simulate_main

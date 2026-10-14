@@ -17,6 +17,7 @@ _MENU_OPTIONS = [
     "Run Simulation",
     "Inspect Game",
     "Settings",
+    "Generate Report",
     "Exit",
 ]
 
@@ -179,7 +180,20 @@ def _run_app(term: r.Terminal, log_path=None):
                 elif selected == 3:
                     screen = "settings"
                 elif selected == 4:
+                    screen = "report"
+                elif selected == 5:
                     return
+
+        elif screen == "report":
+            from goalpost.tui.report import run_report_screen
+
+            status = _run_action(
+                term,
+                lambda t: run_report_screen(t, _run_prompt_flow),
+                "Generate Report",
+                log_path,
+            )
+            screen = "main"
 
         elif screen == "generate":
             status = _run_action(term, _generate, "Generate Dataset", log_path)

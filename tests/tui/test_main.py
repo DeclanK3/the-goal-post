@@ -33,10 +33,15 @@ def terminal(monkeypatch, tmp_path):
     return term
 
 
-@pytest.mark.parametrize("index", range(5))
+@pytest.mark.parametrize("index", range(len(app._MENU_OPTIONS)))
 def test_every_menu_option_can_return_and_exit(terminal, index):
     events = [key(r.KeyCode.Down)] * index + [ENTER]
-    if index < 3:
+    if app._MENU_OPTIONS[index] in (
+        "Generate Dataset",
+        "Run Simulation",
+        "Inspect Game",
+        "Generate Report",
+    ):
         events += [None, SimpleNamespace(kind="resize"), ESC, QUIT]
     elif index == 3:
         events += [None, ENTER, QUIT]

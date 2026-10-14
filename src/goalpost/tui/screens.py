@@ -12,6 +12,7 @@ def draw_main_menu(selected: int = 0) -> str:
         "Run Simulation",
         "Inspect Game",
         "Settings",
+        "Generate Report",
         "Exit",
     ]
     lines = [
