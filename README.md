@@ -165,4 +165,21 @@ The test suite is fully offline. Synthetic data is used **only** inside tests fo
 ## License
 
 MIT
->>>>>>> fix/scoring-transitions
+
+### TUI input and diagnostics
+
+Type directly into fields, use Backspace to edit, Enter to advance, and Esc to
+cancel. `q` exits only at the main menu, so paths containing q remain usable.
+Ctrl-C exits and restores the terminal. Action errors return to the menu; fatal
+terminal errors print the diagnostic path after cleanup. The TUI uses the same
+build and simulation services as the CLI. Empty simulation results are errors.
+
+Local tracebacks and action progress go to `~/.local/state/goalpost/tui.log`
+(or `$XDG_STATE_HOME/goalpost/tui.log`). Set `GOALPOST_LOG_DIR` to override the
+directory. Logs rotate at 1 MiB with three backups and redact Odds API secrets;
+input fields and environment contents are not logged. Native terminal startup
+failures are logged too. Ratatui requires its platform-native FFI library; a
+missing backend is reported explicitly instead of disappearing into the screen.
+
+The offline TUI tests exercise menu actions and cleanup using a terminal double;
+they do not require a native library or mutate the test runner's terminal.

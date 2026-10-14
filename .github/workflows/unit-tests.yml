@@ -1,9 +1,9 @@
 name: Unit tests
 on:
   pull_request:
-    branches: [axiom/architecture-scaffold]
+    branches: [main, axiom/architecture-scaffold]
   push:
-    branches: [axiom/architecture-scaffold]
+    branches: [main, axiom/architecture-scaffold]
 permissions:
   contents: read
 jobs:
