@@ -1,9 +1,14 @@
-"""Load standard weekly exports into NFLGame simulation outputs."""
+# Purpose: Bind saved PMFs to their schedule identity and original simulation denominators.
+# Public API: WeeklyExport.load and its games/report/unavailable fields.
+# Consumers: MarketTableJob validation and comparison; no simulation is rerun here.
+
+from __future__ import annotations
 
 import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from goalpost.data.base.odds import timestamp
 from goalpost.data.nfl.espn_export import normalize
@@ -11,12 +16,16 @@ from goalpost.data.nfl.espn_export import normalize
 from .contracts import NFLGame, ScoreDistribution
 
 
+# Purpose: Keep usable game distributions alongside unavailable-game evidence and source report.
+# Consumers: MarketTableJob validation, history checks and report denominators.
 @dataclass
 class WeeklyExport:
     games: list[NFLGame]
-    report: dict
-    unavailable: list[dict]
+    report: dict[str, Any]
+    unavailable: list[dict[str, Any]]
 
+    # Purpose: Cross-check schedule orientation, event identity, counts and contained PMF paths.
+    # Callers: MarketTableJob.run before any source load; rejects failed/unfinished exports.
     @classmethod
     def load(cls, directory: Path) -> "WeeklyExport":
         directory = directory.resolve()

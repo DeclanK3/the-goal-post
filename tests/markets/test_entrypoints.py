@@ -1,9 +1,15 @@
-"""Both interfaces invoke the same report job; all quotes and schedules are mocked."""
+# Purpose: Verify CLI/TUI parity and explicit source selection with mocked services.
+# Public API: pytest tests and local fixtures in this module.
+# Consumers: The offline unit suite; temporary files never access production stores.
+
+from __future__ import annotations
 
 import json
 import os
 import subprocess
 import sys
+from datetime import datetime, tzinfo
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -11,17 +17,21 @@ import pytest
 import ratatui as r
 
 from goalpost.cli import report
-from goalpost.data.base.odds import QuoteSnapshot
+from goalpost.data.base.odds import BookEvent, QuoteSnapshot
 from goalpost.data.nfl.history import NFLHistory
 from goalpost.data.nfl.odds import OddsAPISource
 from goalpost.tui.report import PROMPTS, generate_report, run_report_screen
 
 
-def values(export_path, output, mode="validate"):
+# Purpose: Build the exact prompt-label mapping consumed by the report screen.
+# Callers: Interface parity and source-selection tests.
+def values(export_path: Path, output: Path, mode: str = "validate") -> dict[str, str]:
     return dict(zip(PROMPTS, [str(export_path), mode, "", str(output), "", ""]))
 
 
-def test_cli_root_report_help_does_not_import_tui():
+# Purpose: Verify cli root report help does not import tui.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_cli_root_report_help_does_not_import_tui() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "goalpost", "--report", "--help"],
         capture_output=True,
@@ -33,9 +43,11 @@ def test_cli_root_report_help_does_not_import_tui():
     assert "--live" in result.stdout and "--export" in result.stdout
 
 
+# Purpose: Verify tui validation runs shared job without quotes or history.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
 def test_tui_validation_runs_shared_job_without_quotes_or_history(
-    export_path, tmp_path, monkeypatch
-):
+    export_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     history, odds = Mock(side_effect=AssertionError), Mock(side_effect=AssertionError)
     monkeypatch.setattr(NFLHistory, "check", history)
     monkeypatch.setattr(OddsAPISource, "load", odds)
@@ -46,10 +58,22 @@ def test_tui_validation_runs_shared_job_without_quotes_or_history(
     odds.assert_not_called()
 
 
-def test_tui_live_uses_same_pricing_table_as_cli(export_path, tmp_path, event, now, monkeypatch):
+# Purpose: Verify tui live uses same pricing table as cli.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_tui_live_uses_same_pricing_table_as_cli(
+    export_path: Path,
+    tmp_path: Path,
+    event: BookEvent,
+    now: datetime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Purpose: Provide the datetime.now surface needed by a controlled report run.
+    # Consumers: Tests monkeypatch the report module datetime binding.
     class Clock:
+        # Purpose: Supply a fixed aware instant so freshness tests do not depend on wall time.
+        # Callers: pytest fixtures or the local monkeypatched report clock.
         @staticmethod
-        def now(tz=None):
+        def now(tz: tzinfo | None = None) -> datetime:
             return now
 
     monkeypatch.setattr(report, "datetime", Clock)
@@ -66,20 +90,26 @@ def test_tui_live_uses_same_pricing_table_as_cli(export_path, tmp_path, event, n
     assert rows and all(row["actual_contract_kelly"] is None for row in rows)
 
 
+# Purpose: Verify tui requires explicit source.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
 @pytest.mark.parametrize("mode", ["", "demo", "auto"])
-def test_tui_requires_explicit_source(export_path, tmp_path, mode):
+def test_tui_requires_explicit_source(export_path: Path, tmp_path: Path, mode: str) -> None:
     with pytest.raises(ValueError, match="Choose live"):
         generate_report(values(export_path, tmp_path / "out", mode))
 
 
-def test_cancel_never_constructs_a_job(monkeypatch):
+# Purpose: Verify cancel never constructs a job.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_cancel_never_constructs_a_job(monkeypatch: pytest.MonkeyPatch) -> None:
     job = Mock(side_effect=AssertionError)
     monkeypatch.setattr("goalpost.tui.report.MarketTableJob", job)
     assert run_report_screen(None, lambda *a: None) == "Canceled"
     job.assert_not_called()
 
 
-def test_menu_dispatches_generate_report(monkeypatch):
+# Purpose: Verify menu dispatches generate report.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_menu_dispatches_generate_report(monkeypatch: pytest.MonkeyPatch) -> None:
     from goalpost.tui import main as app
 
     term = Mock()
@@ -95,12 +125,16 @@ def test_menu_dispatches_generate_report(monkeypatch):
     action.assert_called_once_with(term, app._run_prompt_flow)
 
 
-def test_ui_failure_does_not_echo_key(monkeypatch):
+# Purpose: Verify ui failure does not echo key.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_ui_failure_does_not_echo_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from goalpost.tui import main as app
 
     term = Mock()
 
-    def key(code, ch=0):
+    # Purpose: Construct a key event matching the fields consumed by the TUI loop.
+    # Callers: Offline menu, prompt and failure-path tests.
+    def key(code: int, ch: int = 0) -> SimpleNamespace:
         return SimpleNamespace(kind="key", code=code, ch=ch, mods=0)
 
     term.next_event_typed.side_effect = [key(r.KeyCode.Down)] * 4 + [

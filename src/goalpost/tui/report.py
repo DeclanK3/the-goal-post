@@ -1,13 +1,20 @@
-"""Generate a research market report using the same job as the CLI."""
+# Purpose: Collect explicit report inputs and invoke the shared research report job.
+# Public API: PROMPTS, generate_report, run_report_screen.
+# Consumers: The Generate Report action in tui.main and interface parity tests.
+
+from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+
+import ratatui as r
 
 from goalpost.cli.report import MarketTableJob
 from goalpost.data.nfl.odds import OddsAPISource, SQLiteQuoteSource
 from goalpost.simulation.nfl.comparison import ComparisonSettings
 
-PROMPTS = [
+PROMPTS: list[str] = [
     "Simulation export directory",
     "Quote source (live / database / validate)",
     "Database path (database mode only)",
@@ -17,7 +24,9 @@ PROMPTS = [
 ]
 
 
-def generate_report(values):
+# Purpose: Validate explicit TUI source choices and invoke the same report job as the CLI.
+# Callers: run_report_screen and CLI/TUI parity tests.
+def generate_report(values: dict[str, str]) -> str:
     export = values.get(PROMPTS[0], "").strip()
     if not export:
         raise ValueError("Simulation export directory is required")
@@ -58,7 +67,11 @@ def generate_report(values):
     )
 
 
-def run_report_screen(term, prompt):
+# Purpose: Collect report inputs without prompting for or persisting API credentials.
+# Callers: tui.main Generate Report action; cancellation does not create a job.
+def run_report_screen(
+    term: r.Terminal, prompt: Callable[[r.Terminal, str, list[str]], dict[str, str] | None]
+) -> str:
     # No key prompt, saved key or implicit paid request. Selecting live is explicit.
     values = prompt(
         term, "Generate Report — research/regulation only; live makes one paid request", PROMPTS

@@ -1,20 +1,30 @@
-"""Offline fixtures only; no installed demo, data generator or network access."""
+# Purpose: Provide deterministic market evidence and block accidental network access.
+# evidence.
+# Public API: pytest tests and local fixtures in this module.
+# Consumers: The offline unit suite; temporary files never access production stores.
+
+from __future__ import annotations
 
 import json
 import socket
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from goalpost.data.base.odds import BookEvent, Quote
 from goalpost.data.nfl.espn_export import normalize
-from goalpost.data.nfl.odds import BookEvent, Quote
 from goalpost.simulation.nfl.contracts import NFLGame, ScoreDistribution
 
 
+# Purpose: Fail unexpected network access and clear source opt-ins for isolation.
+# Callers: pytest automatically for every market test.
 @pytest.fixture(autouse=True)
-def forbid_network(monkeypatch):
-    def blocked(*args, **kwargs):
+def forbid_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: Raise before a test can open a socket.
+    # Callers: The monkeypatched socket.connect used by forbid_network.
+    def blocked(*args: object, **kwargs: object) -> None:
         raise AssertionError("Tests must remain offline")
 
     monkeypatch.setattr(socket.socket, "connect", blocked)
@@ -22,13 +32,17 @@ def forbid_network(monkeypatch):
     monkeypatch.delenv("GOALPOST_LOCAL_DB_ENABLED", raising=False)
 
 
+# Purpose: Supply a fixed aware instant so freshness tests do not depend on wall time.
+# Callers: pytest fixtures or the local monkeypatched report clock.
 @pytest.fixture
-def now():
+def now() -> datetime:
     return datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
 
 
+# Purpose: Provide a small known PMF with pushes, incomplete paths and approximation counts.
+# Callers: Market fixtures and contract/comparison regressions.
 @pytest.fixture
-def game():
+def game() -> NFLGame:
     return NFLGame(
         "2026_06_PIT_CLE",
         "Cleveland Browns",
@@ -42,21 +56,27 @@ def game():
     )
 
 
+# Purpose: Provide a complete two-sided moneyline pair at the controlled clock.
+# Callers: event fixture and market comparison tests.
 @pytest.fixture
-def quotes(game, now):
+def quotes(game: NFLGame, now: datetime) -> list[Quote]:
     return [
         Quote("home", "h2h", game.home, None, -200, now, now, "live_response_context"),
         Quote("away", "h2h", game.away, None, 170, now, now, "live_response_context"),
     ]
 
 
+# Purpose: Bind synthetic quote evidence to the fixture game without provider requests.
+# Callers: Comparison, bridge and interface tests.
 @pytest.fixture
-def event(game, quotes):
+def event(game: NFLGame, quotes: list[Quote]) -> BookEvent:
     return BookEvent("provider-id", game.home, game.away, game.kickoff, tuple(quotes))
 
 
+# Purpose: Write a self-contained temporary export with matching schedule and PMF evidence.
+# Callers: Export, bridge, history and entry-point regressions.
 @pytest.fixture
-def export_path(tmp_path):
+def export_path(tmp_path: Path) -> Path:
     root = tmp_path / "export"
     root.mkdir()
     event = {

@@ -1,11 +1,19 @@
-"""Main CLI entry point. Defaults to TUI; preserves --build and --simulate for scripting."""
+# Purpose: Dispatch explicit script commands while retaining the default interactive interface.
+# Public API: main, registered as the goalpost console entry point.
+# Consumers: The console script, package __main__ and command-line users.
+
+from __future__ import annotations
+
 import sys
 
 
-def main():
+# Purpose: Dispatch the selected command without eager optional UI imports.
+# Callers: Console entry points and package __main__.
+def main() -> None:
     # If no args, launch interactive TUI
     if len(sys.argv) == 1:
         from goalpost.tui.main import run_tui
+
         run_tui()
         return
 
@@ -15,16 +23,20 @@ def main():
         # Remove --build from args so argparse works
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         from goalpost.cli.build import main as build_main
+
         build_main()
     elif cmd == "--report":
         from goalpost.cli.report import main as report_main
+
         report_main(sys.argv[2:])
     elif cmd == "--simulate":
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         from goalpost.cli.simulate import main as simulate_main
+
         simulate_main()
     else:
         from goalpost.tui.main import run_tui
+
         run_tui()
 
 

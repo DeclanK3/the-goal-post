@@ -1,8 +1,13 @@
-"""Interactive TUI with one event reader, recoverable actions and local diagnostics."""
+# Purpose: Keep one terminal event loop with recoverable actions and bounded diagnostics.
+# Public API: run_tui and main; private prompt/action helpers are exercised offline.
+# Consumers: The package CLI default route and mocked terminal-flow tests.
+
+from __future__ import annotations
 
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Callable
 
 import polars as pl
 import ratatui as r
@@ -12,7 +17,7 @@ from goalpost.cli.simulate import SimulationRequest, run_simulation
 from goalpost.data.nfl.fetcher import fetch_nflverse
 from goalpost.tui.diagnostics import LOG, LogStream, configure_logging, redact
 
-_MENU_OPTIONS = [
+_MENU_OPTIONS: list[str] = [
     "Generate Dataset",
     "Run Simulation",
     "Inspect Game",
@@ -22,7 +27,9 @@ _MENU_OPTIONS = [
 ]
 
 
-def _draw_text(term, lines):
+# Purpose: Render one screen and surface a failed native drawing operation.
+# Callers: Menu, settings and prompt helpers.
+def _draw_text(term: r.Terminal, lines: list[str]) -> None:
     term.clear()
     paragraph = r.Paragraph.from_text("\n".join(lines))
     paragraph.set_alignment("left")
@@ -30,14 +37,18 @@ def _draw_text(term, lines):
         raise RuntimeError("Terminal could not render the screen")
 
 
-def _draw_main_menu(term, selected, status=""):
+# Purpose: Render navigation hints, selection and the previous action status.
+# Callers: _run_app while the main menu is active.
+def _draw_main_menu(term: r.Terminal, selected: int, status: str = "") -> None:
     lines = ["", "  GoalPost — Transition Modeling", ""]
     lines.extend(f"  {'>' if i == selected else ' '} {opt}" for i, opt in enumerate(_MENU_OPTIONS))
     lines.extend(["", "  j/k or ↑/↓ to navigate, Enter to select; q to exit", "", status])
     _draw_text(term, lines)
 
 
-def _next_key(term):
+# Purpose: Ignore timeouts/non-key events and normalize Ctrl-C/Ctrl-D as interruption.
+# Callers: Menu, prompt and settings flows through a single event reader.
+def _next_key(term: r.Terminal) -> r.Event:
     # The binding returns None on timeout/no event. Negative timeouts wrap to u64.
     while True:
         event = term.next_event_typed(100)
@@ -49,7 +60,11 @@ def _next_key(term):
         return event
 
 
-def _run_prompt_flow(term, title, prompt_labels):
+# Purpose: Collect labeled values through terminal events while supporting cancellation.
+# Callers: Dataset, simulation, inspection and report actions.
+def _run_prompt_flow(
+    term: r.Terminal, title: str, prompt_labels: list[str]
+) -> dict[str, str] | None:
     values = {}
     for label in prompt_labels:
         buffer = ""
@@ -81,14 +96,18 @@ def _run_prompt_flow(term, title, prompt_labels):
     return values
 
 
-def _required(values, label):
+# Purpose: Reject empty required fields before converting inputs or opening files.
+# Callers: Dataset, simulation and inspection actions.
+def _required(values: dict[str, str], label: str) -> str:
     value = values.get(label, "").strip()
     if not value:
         raise ValueError(f"{label} is required")
     return value
 
 
-def _generate(term):
+# Purpose: Build a dataset from local sources or an explicitly requested download.
+# Callers: _run_app through _run_action.
+def _generate(term: r.Terminal) -> str:
     labels = ["Sources directory (or download)", "Output directory", "Seasons (optional)"]
     values = _run_prompt_flow(term, "Generate Dataset", labels)
     if values is None:
@@ -105,7 +124,9 @@ def _generate(term):
     return f"Built {result.observation_count} observations from {result.game_count} games"
 
 
-def _simulate(term):
+# Purpose: Run the shared simulation job and reject empty output as a success message.
+# Callers: _run_app through _run_action.
+def _simulate(term: r.Terminal) -> str:
     labels = ["Dataset directory", "Week number", "Season year"]
     values = _run_prompt_flow(term, "Run Simulation", labels)
     if values is None:
@@ -121,7 +142,9 @@ def _simulate(term):
     return f"Simulated {len(result.game_results)} games"
 
 
-def _inspect(term):
+# Purpose: Read a user-selected parquet file and return a compact shape summary.
+# Callers: _run_app through _run_action.
+def _inspect(term: r.Terminal) -> str:
     values = _run_prompt_flow(term, "Inspect Game", ["Parquet path"])
     if values is None:
         return "Canceled"
@@ -129,13 +152,19 @@ def _inspect(term):
     return f"Loaded {len(frame)} rows, columns: {frame.columns[:5]}"
 
 
-def _settings(term):
+# Purpose: Present the placeholder settings screen and wait for a return key.
+# Callers: _run_app through _run_action.
+def _settings(term: r.Terminal) -> str:
     _draw_text(term, ["", "  Settings", "", "  No settings yet", "", "  Press any key to return"])
     _next_key(term)
     return ""
 
 
-def _run_action(term, action, title, log_path):
+# Purpose: Capture operation output in diagnostics and return sanitized recoverable errors.
+# Callers: _run_app for each menu action.
+def _run_action(
+    term: r.Terminal, action: Callable[[r.Terminal], str], title: str, log_path: Path | None
+) -> str:
     LOG.info("action started: %s", title)
     try:
         with redirect_stdout(LogStream()), redirect_stderr(LogStream()):
@@ -147,7 +176,9 @@ def _run_action(term, action, title, log_path):
         return f"Error: {redact(str(error))}. Details: {log_path or 'tui.log'}"
 
 
-def _run_app(term: r.Terminal, log_path=None):
+# Purpose: Dispatch menu states using one event stream and recoverable action wrappers.
+# Callers: run_tui after terminal setup and offline event-flow tests.
+def _run_app(term: r.Terminal, log_path: Path | None = None) -> None:
     selected = 0
     status = ""
     screen = "main"
@@ -209,7 +240,9 @@ def _run_app(term: r.Terminal, log_path=None):
             screen = "main"
 
 
-def run_tui():
+# Purpose: Initialize the terminal and attempt every restoration step on exit or failure.
+# Callers: CLI default route and tui.main.main.
+def run_tui() -> None:
     # Logging starts before terminal creation so startup failures are also recorded.
     log_path = configure_logging()
     LOG.info("session started")
@@ -240,7 +273,9 @@ def run_tui():
         raise SystemExit(1)
 
 
-def main():
+# Purpose: Expose the terminal application as a script entry point.
+# Callers: Module execution and console dispatch.
+def main() -> None:
     run_tui()
 
 

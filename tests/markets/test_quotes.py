@@ -1,7 +1,17 @@
+# Purpose: Verify source opt-ins, request accounting, redaction and read-only storage.
+# evidence.
+# Public API: pytest tests and local fixtures in this module.
+# Consumers: The offline unit suite; temporary files never access production stores.
+
+from __future__ import annotations
+
 import io
 import json
 import sqlite3
 from contextlib import closing
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
@@ -12,7 +22,9 @@ from goalpost.data.nfl import odds as module
 from goalpost.data.nfl.odds import OddsAPISource, QuoteSource, QuoteSourceError, SQLiteQuoteSource
 
 
-def payload():
+# Purpose: Build a minimal synthetic provider response with a two-sided main market.
+# Callers: Quote adapter tests; contains no real event or account credentials.
+def payload() -> list[dict[str, Any]]:
     return [
         {
             "id": "event",
@@ -39,18 +51,24 @@ def payload():
     ]
 
 
-def response(body, headers):
+# Purpose: Wrap synthetic JSON and headers in a mocked HTTP response stream.
+# Callers: Quote-source tests that patch urlopen.
+def response(body: Any, headers: dict[str, str]) -> io.BytesIO:
     stream = io.BytesIO(json.dumps(body).encode())
     stream.headers = headers
     return stream
 
 
-def test_source_is_abstract():
+# Purpose: Verify source is abstract.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_source_is_abstract() -> None:
     with pytest.raises(TypeError):
         QuoteSource()
 
 
-def test_no_key_means_no_request(monkeypatch):
+# Purpose: Verify no key means no request.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_no_key_means_no_request(monkeypatch: pytest.MonkeyPatch) -> None:
     fetch = Mock()
     monkeypatch.setattr(module, "urlopen", fetch)
     with pytest.raises(QuoteSourceError, match="ODDS_API"):
@@ -58,7 +76,9 @@ def test_no_key_means_no_request(monkeypatch):
     fetch.assert_not_called()
 
 
-def test_live_fetch_uses_env_and_reports_known_credits(monkeypatch):
+# Purpose: Verify live fetch uses env and reports known credits.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_live_fetch_uses_env_and_reports_known_credits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ODDS_API", "unit-test-only")
     fetch = Mock(
         return_value=response(
@@ -78,13 +98,17 @@ def test_live_fetch_uses_env_and_reports_known_credits(monkeypatch):
     assert "unit-test-only" not in repr(source) + repr(snapshot)
 
 
-def test_no_credit_headers_means_unknown_not_zero(monkeypatch):
+# Purpose: Verify no credit headers means unknown not zero.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_no_credit_headers_means_unknown_not_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ODDS_API", "unit-test-only")
     monkeypatch.setattr(module, "urlopen", Mock(return_value=response(payload(), {})))
     snapshot = OddsAPISource().load()
     assert snapshot.credits_last_request is None and snapshot.credits_remaining is None
 
 
+# Purpose: Verify failure redacts key and never retries.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
 @pytest.mark.parametrize(
     "failure",
     [
@@ -93,7 +117,9 @@ def test_no_credit_headers_means_unknown_not_zero(monkeypatch):
         TimeoutError("unit-test-only"),
     ],
 )
-def test_failure_redacts_key_and_never_retries(monkeypatch, failure):
+def test_failure_redacts_key_and_never_retries(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
     monkeypatch.setenv("ODDS_API", "unit-test-only")
     fetch = Mock(side_effect=failure)
     monkeypatch.setattr(module, "urlopen", fetch)
@@ -102,7 +128,9 @@ def test_failure_redacts_key_and_never_retries(monkeypatch, failure):
     assert "unit-test-only" not in str(error.value) and fetch.call_count == 1
 
 
-def test_bad_response_does_not_echo_provider_body(monkeypatch):
+# Purpose: Verify bad response does not echo provider body.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_bad_response_does_not_echo_provider_body(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ODDS_API", "unit-test-only")
     monkeypatch.setattr(
         module, "urlopen", Mock(return_value=response({"error": "unit-test-only"}, {}))
@@ -112,27 +140,37 @@ def test_bad_response_does_not_echo_provider_body(monkeypatch):
     assert "unit-test-only" not in str(error.value)
 
 
-def test_missing_book_stays_missing(now):
+# Purpose: Verify missing book stays missing.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_missing_book_stays_missing(now: datetime) -> None:
     body = payload()
     body[0]["bookmakers"][0]["key"] = "anotherbook"
     assert not OddsAPISource().parse(body, now)[0].quotes
 
 
-def test_market_timestamp_takes_precedence(now):
+# Purpose: Verify market timestamp takes precedence.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_market_timestamp_takes_precedence(now: datetime) -> None:
     body = payload()
     body[0]["bookmakers"][0]["markets"][0]["last_update"] = "2026-10-12T00:00:00Z"
     quote = OddsAPISource().parse(body, now)[0].quotes[0]
     assert quote.updated_at.day == 12
 
 
-def test_local_database_disabled_by_default(tmp_path):
+# Purpose: Verify local database disabled by default.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_local_database_disabled_by_default(tmp_path: Path) -> None:
     path = tmp_path / "absent.db"
     with pytest.raises(QuoteSourceError, match="GOALPOST_LOCAL_DB_ENABLED"):
         SQLiteQuoteSource(path).load()
     assert not path.exists()
 
 
-def test_local_adapter_never_creates_missing_database(tmp_path, monkeypatch):
+# Purpose: Verify local adapter never creates missing database.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_local_adapter_never_creates_missing_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("GOALPOST_LOCAL_DB_ENABLED", "true")
     path = tmp_path / "absent.db"
     with pytest.raises(sqlite3.OperationalError):
@@ -140,7 +178,11 @@ def test_local_adapter_never_creates_missing_database(tmp_path, monkeypatch):
     assert not path.exists()
 
 
-def test_existing_store_readonly_latest_record_and_context(tmp_path, monkeypatch):
+# Purpose: Verify existing store readonly latest record and context.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_existing_store_readonly_latest_record_and_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("GOALPOST_LOCAL_DB_ENABLED", "true")
     path = tmp_path / "quotes.db"
     with closing(sqlite3.connect(path)) as db:
@@ -168,7 +210,9 @@ def test_existing_store_readonly_latest_record_and_context(tmp_path, monkeypatch
     assert snapshot.requests == 0 and path.read_bytes() == before
 
 
-def test_duplicate_api_event_ids_rejected(now):
+# Purpose: Verify duplicate api event ids rejected.
+# Callers: pytest; uses synthetic fixtures or mocked services only.
+def test_duplicate_api_event_ids_rejected(now: datetime) -> None:
     body = payload()
     with pytest.raises(ValueError, match="Duplicate"):
         OddsAPISource().parse(body + body, now)

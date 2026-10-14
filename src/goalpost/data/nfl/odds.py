@@ -1,4 +1,8 @@
-"""NFL live and read-only local odds adapters; requests are explicit."""
+# Purpose: Acquire one explicit quote snapshot from an API or an opted-in read-only store.
+# Public API: OddsAPISource, SQLiteQuoteSource, MAIN_MARKETS.
+# Consumers: CLI/TUI report jobs; adapters preserve missing timestamps and unknown credits.
+
+from __future__ import annotations
 
 import json
 import os
@@ -7,6 +11,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -22,16 +27,18 @@ from goalpost.data.base.odds import (
     validate_book,
 )
 
-MAIN_MARKETS = ("h2h", "spreads", "totals")
+MAIN_MARKETS: tuple[str, ...] = ("h2h", "spreads", "totals")
 
 
+# Purpose: Make one explicit NFL main-market request per load with no retry or scheduler.
+# Consumers: CLI/TUI users who deliberately select live mode.
 @dataclass
 class OddsAPISource(QuoteSource):
-    """One NFL odds request per load, requiring ODDS_API; no retries or scheduler."""
-
     book: str = "fanduel"
     timeout_seconds: float = 30
 
+    # Purpose: Fetch and parse one response, sanitizing failures and preserving unknown charges.
+    # Callers: MarketTableJob after input and donor-history validation.
     def load(self) -> QuoteSnapshot:
         validate_book(self.book)
         key = os.environ.get("ODDS_API", "").strip()
@@ -65,6 +72,9 @@ class OddsAPISource(QuoteSource):
         except (ValueError, KeyError, TypeError, AttributeError):
             raise QuoteSourceError("Invalid Odds API response; not retried") from None
 
+        # Purpose: Parse only observed numeric credit headers; missing or malformed values stay
+        # unknown.
+        # Callers: OddsAPISource.load when building snapshot accounting.
         def credit(name: str) -> int | None:
             value = headers.get(name)
             return int(value) if isinstance(value, str) and value.isdigit() else None
@@ -78,7 +88,9 @@ class OddsAPISource(QuoteSource):
             credits_last_request=credit("x-requests-last"),
         )
 
-    def parse(self, payload: list, captured: datetime) -> tuple[BookEvent, ...]:
+    # Purpose: Translate returned event context without inventing missing book/timestamp evidence.
+    # Callers: OddsAPISource.load and offline adapter tests.
+    def parse(self, payload: list[dict[str, Any]], captured: datetime) -> tuple[BookEvent, ...]:
         if not isinstance(payload, list):
             raise ValueError("Expected a list of NFL events")
         ids = [event["id"] for event in payload]
@@ -122,13 +134,16 @@ class OddsAPISource(QuoteSource):
         return tuple(events)
 
 
+# Purpose: Read an existing opted-in engine store without migrations or data writes.
+# Consumers: CLI/TUI users who explicitly choose database mode.
 @dataclass
 class SQLiteQuoteSource(QuoteSource):
-    """Opt-in reads of an existing engine store; never creates tables or migrates it."""
-
     path: Path
     book: str = "fanduel"
 
+    # Purpose: Read latest stored selections in one read-only transaction and verify saved
+    # context.
+    # Callers: MarketTableJob; comparison decides pair completeness and freshness.
     def load(self) -> QuoteSnapshot:
         if os.environ.get("GOALPOST_LOCAL_DB_ENABLED", "false").lower() != "true":
             raise QuoteSourceError("Local database access requires GOALPOST_LOCAL_DB_ENABLED=true")

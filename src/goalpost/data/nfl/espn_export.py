@@ -15,8 +15,19 @@ TEAMS: set[str] = set(
 ALIASES: dict[str, str] = {"LAR": "LA", "WSH": "WAS"}
 POSTSEASON_ROUNDS: dict[int, str] = {1: "WC", 2: "DIV", 3: "CON", 5: "SB"}
 COLUMNS: list[str] = [
-    "game_id", "season", "week", "game_type", "gameday", "gametime", "home_team",
-    "away_team", "home_score", "away_score", "espn_event_id", "source_status", "kickoff_utc",
+    "game_id",
+    "season",
+    "week",
+    "game_type",
+    "gameday",
+    "gametime",
+    "home_team",
+    "away_team",
+    "home_score",
+    "away_score",
+    "espn_event_id",
+    "source_status",
+    "kickoff_utc",
 ]
 
 

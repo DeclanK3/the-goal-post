@@ -14,7 +14,6 @@ from goalpost.data.base.odds import timestamp
 # Purpose: keep stale donor coverage from being mistaken for current-season modeling.
 # Consumers: the shared CLI/TUI report job; this is a coverage check, not calibration.
 class NFLHistory:
-
     # Purpose: fetch schedule evidence only when imported simulations are still upcoming.
     # Callers: MarketTableJob.run; failures stop the job before a paid odds request.
     def check(self, report: dict[str, Any], now: datetime) -> dict[str, Any]:

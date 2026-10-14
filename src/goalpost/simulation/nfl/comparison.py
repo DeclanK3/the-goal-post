@@ -1,8 +1,13 @@
-"""Match upcoming NFL simulations to exact current main-market quote pairs."""
+# Purpose: Price exact latest main-market pairs and preserve every exclusion for audit.
+# Public API: ComparisonSettings, MarketRow, NFLComparison, complete_pair.
+# Consumers: MarketTableJob artifact writing and offline comparison tests.
+
+from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from math import isclose, isfinite
+from typing import Any
 
 from goalpost.data.base.odds import BookEvent, Quote, QuoteSnapshot, validate_book
 from goalpost.data.nfl.odds import MAIN_MARKETS
@@ -11,6 +16,8 @@ from goalpost.simulation.base.pricing import AmericanOdds
 from .contracts import NFLGame, NFLMoneyline, NFLSpread, NFLTotal
 
 
+# Purpose: Make bookmaker, freshness, identity tolerance and optional bankroll explicit.
+# Consumers: CLI/TUI input adapters and NFLComparison.
 @dataclass(frozen=True)
 class ComparisonSettings:
     book: str = "fanduel"
@@ -18,7 +25,9 @@ class ComparisonSettings:
     kickoff_tolerance_seconds: float = 600
     bankroll: float | None = None
 
-    def __post_init__(self):
+    # Purpose: Reject invalid limits and bankrolls before processing quote evidence.
+    # Callers: Dataclass construction at report entry points.
+    def __post_init__(self) -> None:
         validate_book(self.book)
         if not isfinite(self.max_quote_age_seconds) or self.max_quote_age_seconds <= 0:
             raise ValueError("Quote age limit must be positive")
@@ -28,6 +37,8 @@ class ComparisonSettings:
             raise ValueError("Bankroll must be positive")
 
 
+# Purpose: Keep priced and excluded selections in one auditable output schema.
+# Consumers: NFLComparison.price and report CSV/JSON writers.
 @dataclass
 class MarketRow:
     game_id: str
@@ -62,6 +73,8 @@ class MarketRow:
     calculation_scope: str = "hypothetical_regulation_pushes_or_ties_void"
 
 
+# Purpose: Require exactly two opposing participants at the same or negated exact line.
+# Callers: NFLComparison.select after choosing the latest capture for a market family.
 def complete_pair(quotes: list[Quote], game: NFLGame) -> bool:
     if len(quotes) != 2:
         return False
@@ -77,12 +90,17 @@ def complete_pair(quotes: list[Quote], game: NFLGame) -> bool:
     return lines[0] == lines[1] if family == "totals" else isclose(sum(lines), 0, abs_tol=1e-8)
 
 
+# Purpose: Match one upcoming event and evaluate latest exact pairs without historical fallback.
+# Consumers: MarketTableJob; outputs are research calculations, not market admission.
 class NFLComparison:
-    def __init__(self, settings: ComparisonSettings):
+    # Purpose: Store validated comparison settings for one report calculation.
+    # Callers: MarketTableJob and comparison tests.
+    def __init__(self, settings: ComparisonSettings) -> None:
         self.settings = settings
 
-    def select(self, event: BookEvent, game: NFLGame) -> tuple[list[Quote], list[dict]]:
-        """Never rescue an incomplete newest pair by taking an older line."""
+    # Purpose: Keep only a complete newest main pair and record every excluded quote.
+    # Callers: NFLComparison.run; an older complete pair cannot rescue a newer partial one.
+    def select(self, event: BookEvent, game: NFLGame) -> tuple[list[Quote], list[dict[str, Any]]]:
         selected, evidence = [], []
         for quote in event.quotes:
             if quote.family not in MAIN_MARKETS:
@@ -111,8 +129,10 @@ class NFLComparison:
                 evidence.append(self.disposition(quote, disposition))
         return selected, evidence
 
+    # Purpose: Project quote identity and an explicit selection/exclusion reason into evidence.
+    # Callers: NFLComparison.select.
     @staticmethod
-    def disposition(quote: Quote, reason: str) -> dict:
+    def disposition(quote: Quote, reason: str) -> dict[str, Any]:
         return {
             "quote_reference": quote.reference,
             "market": quote.family,
@@ -123,6 +143,8 @@ class NFLComparison:
             "disposition": reason,
         }
 
+    # Purpose: Apply timestamp/context checks and compute hypothetical regulation arithmetic.
+    # Callers: NFLComparison.run; stale arithmetic is retained outside the current list.
     def price(self, game: NFLGame, event: BookEvent, quote: Quote, now: datetime) -> MarketRow:
         row = MarketRow(
             game_id=game.game_id,
@@ -186,7 +208,9 @@ class NFLComparison:
         )
         return row
 
-    def run(self, games: list[NFLGame], snapshot: QuoteSnapshot, now: datetime) -> dict:
+    # Purpose: Preserve every matchup denominator and sort only fresh evaluated rows by EV.
+    # Callers: MarketTableJob.run; missing or ambiguous matches remain visible.
+    def run(self, games: list[NFLGame], snapshot: QuoteSnapshot, now: datetime) -> dict[str, Any]:
         if now.tzinfo is None:
             raise ValueError("Comparison time must include a timezone")
         rows, matchups, evidence = [], [], []
